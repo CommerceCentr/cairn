@@ -4,9 +4,17 @@
 > &nbsp;&nbsp;|&nbsp;&nbsp; License: [Apache-2.0](LICENSE)
 > &nbsp;&nbsp;|&nbsp;&nbsp; [Support the project](#support-the-project)
 
-**Cairn turns your agent's session history into a queryable store of
-*why*, so a coding agent can recover the reasoning behind a file in
-~300–1 700 tokens instead of 12 000–240 000.**
+### Your AI agent forgets everything between sessions. Cairn remembers.
+
+Close the terminal, and tomorrow your agent starts from zero. It
+re-reads the same files, suggests the thing you rejected yesterday, and
+spends tokens rebuilding what it already knew. Meanwhile your context
+window fills with archaeology instead of the task.
+
+**Cairn keeps those conversations and gives them back when they matter.**
+You ask *"why is this file like this?"* — and get the answer in about
+**300–1 700 tokens**, instead of the **12 000–240 000** it would take to
+dig through git history by hand.
 
 A **cairn** is a stack of stones left on a mountain pass by the people
 who walked it before you, so the next traveller does not get lost. It
@@ -136,10 +144,13 @@ of to archaeology.
 ## How it works
 
 ```text
-agent session journals  ──┐
-                          ├──►  portable store  ──►  "why" query
-git history               ──┘         │
-                                      └──►  nodes of code, docs, media
+   SOURCES                     STORE                 ANSWERS
+
+   agent session journals --+
+                            |
+                            +--->  portable store  --->  why <file>
+                            |      JSONL, 7.2 MB         why --node <symbol>
+   git history -------------+      local, yours          bind --zone <zone>
 ```
 
 Three commands cover the whole cycle:
