@@ -246,5 +246,5 @@ python cairn.py selftest --store ./store --adapter claude_code     # exit 0
 
 ---
 
-Розроблено за підтримки **[CommerCentr](https://commercentr.com/en)** —
+Розроблено за підтримки **[CommerCentr](https://commercentr.com)** —
 компанії, що будує маркетплейс і CMS із власним AI-контуром.
