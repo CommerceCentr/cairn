@@ -4,44 +4,132 @@
 > &nbsp;&nbsp;|&nbsp;&nbsp; License: [Apache-2.0](LICENSE)
 > &nbsp;&nbsp;|&nbsp;&nbsp; [Support the project](#support-the-project)
 
-A **cairn** is a stack of stones left on a mountain pass by the people
-who walked it before you, so the next traveller does not get lost.
-Nobody carries it along — it stays where it is, and it costs exactly as
-much as a stone weighs.
+**Cairn turns your agent's session history into a queryable store of
+*why*, so a coding agent can recover the reasoning behind a file in
+~300–1 700 tokens instead of 12 000–240 000.**
 
-Cairn does the same for development history. It builds a **portable
-causality store** out of what you already have — your agent's session
-journals and your git history — and answers the one question no other
-tool keeps: **why is this code the way it is, and what was already tried
-here.**
+A **cairn** is a stack of stones left on a mountain pass by the people
+who walked it before you, so the next traveller does not get lost. It
+stays where it is, and it costs exactly as much as a stone weighs.
 
 Developed with the support of
 **[CommerCentr](https://commercentr.com/en)**.
 
 ---
 
-## The problem
+## The pain: the context window is a budget, and history does not fit
 
-Git tells you **what** changed. A good commit body sometimes tells you
-**why**. But decisions are made in conversation with an agent, and that
-is where the valuable part stays: rejected approaches, instructions from
-the person who owns the product, and measurements that overturned a
-hypothesis. None of it reaches the repository.
+A coding agent has a fixed context window. Everything it reads competes
+for the same space: your prompt, the code, the tool output, its own
+reasoning. History is the first thing cut — not because it is useless,
+but because it is **enormous and undifferentiated**.
 
-The cost shows up daily. A new session starts from zero, re-reads the
-same files, proposes what you reverted yesterday, and burns budget
-rebuilding context that existed the day before.
+Measured on one real file we work with daily:
 
-This is not a thought experiment. On one core class we counted:
+| What the agent would have to read | Bytes | ≈ tokens |
+|---|---:|---:|
+| `gui/server.py` itself | 646 713 | **162 000** |
+| its 166 commit messages (`git log`) | 169 698 | **42 000** |
+| full diffs (`git log -p`) — where removed prose lives | 959 030 | **240 000** |
+
+*(Tokens throughout this document are estimated as characters ÷ 4 and
+marked as estimates; the byte counts are measured.)*
+
+The third row is the problem in one number: the place where the
+explanation actually lives **does not fit into any mainstream context
+window at all**. So the agent does what you have seen it do — skims,
+guesses, or re-derives a decision that was already made and reverted.
+
+This is not hypothetical. On one core class we counted:
 
 ```text
 26 edits over four months
 at least 4 of them fixing the SAME defect — an updater reporting
 success it had not achieved
-the reason for none of the four is recorded anywhere in the code
+not one of the four recorded why
 ```
 
 The fifth edit would have been the fifth patch.
+
+---
+
+## How Cairn solves it
+
+Three ideas, each doing one job:
+
+```text
+1  ADDRESS CONTENT, NOT POSITION
+   history is attached to `method:Ns\Class::name`, to a heading path,
+   to a timecode — things that survive edits, unlike line numbers
+
+2  STORE THE SUMMARY, NOT THE TRANSCRIPT
+   agents already compact their own context when the window fills.
+   That compaction summary IS the "why", pre-written and pre-shrunk.
+   Cairn keeps those, not the raw conversation
+
+3  BOUND THE ANSWER BEFORE PRODUCING IT
+   every query estimates its own cost first, then applies a policy:
+   trim, ask, or allow-and-say-so. The agent learns the price before
+   it pays it
+```
+
+### The cost of one question
+
+The same question — *why is this file the way it is* — asked two ways.
+Both files are real, both measured today.
+
+| | typical file (10.7 KB) | large file (632 KB) |
+|---|---:|---:|
+| commits | 48 | 166 |
+| `git log` | 46 920 B ≈ **11 700 tok** | 169 698 B ≈ **42 000 tok** |
+| `git log -p` | 165 628 B ≈ **41 000 tok** | 959 030 B ≈ **240 000 tok** |
+| **`cairn why --priority low`** | 1 535 chars ≈ **384 tok** | 1 158 chars ≈ **290 tok** |
+| **`cairn why --priority normal`** | 6 637 chars ≈ **1 660 tok** | 6 637 chars ≈ **1 660 tok** |
+| cheaper than `git log` | **×30** | **×146** |
+
+Note the shape of the large-file column: Cairn's cost **does not grow
+with the file's history**, because the budget bounds it. A file with ten
+times the history costs the same to ask about.
+
+### What the store holds, and what a query costs
+
+```text
+held       11 720 records · 59 sessions · 2 766 files · 107 summaries
+           2.4 MB of summary text ≈ 600 000 tokens of compressed history
+           total on disk 6.0 MB, built from 2.5 GB of raw journals
+spent      290–1 660 tokens per question, bounded in advance
+```
+
+The ratio is the point: roughly **600 000 tokens of history held, a few
+hundred spent to reach the relevant part of it.**
+
+### Projected over a session, a week, a quarter
+
+The two parameters below are **measured from our own 59 sessions**, not
+assumed:
+
+```text
+distinct files touched per session   median 21   (half of sessions 9–67)
+sessions per week                    median 2, mean 3.3, max 15
+```
+
+How often an agent genuinely needs the *why* for a file is a judgement,
+not a measurement — so the table gives you the multiplier instead of
+picking one. Saving per lookup is taken from the **typical** file
+(11 700 → 384 tokens ≈ 11 300 saved):
+
+| Lookups per session | Per session | Per week (2 sessions) | Per quarter (12 weeks) |
+|---:|---:|---:|---:|
+| 1 | 11 K | 23 K | 271 K |
+| 3 | 34 K | 68 K | 814 K |
+| 5 | 57 K | 113 K | 1.36 M |
+| 10 | 113 K | 226 K | 2.71 M |
+
+**What this table is not.** It is not a bill: tokens saved are not money
+saved one-to-one, and an agent that never asked about history was not
+spending those tokens in the first place. What it does show is the size
+of the window you get back — context that can now go to the task instead
+of to archaeology.
 
 ---
 
@@ -84,6 +172,32 @@ python cairn.py why --store ./store <path> --budget 4000 --on-overflow ask
 Measured end to end over 12 budget/size combinations: **0 % overruns.**
 For comparison, an external index doing the same job exceeded its budget
 in **87.5 %** of runs (14 of 16), the worst by **×15.6**.
+
+---
+
+## Status: what is actually on Cairn
+
+Measured today, not planned. These are the projects whose Claude Code
+journals exist on this machine:
+
+| Projects | Sessions | On Cairn |
+|---|---:|---|
+| with sessions, **indexed** | 78 | ✅ 3 projects |
+| with sessions, **not yet indexed** | 29 | ⬜ 6 projects |
+| no sessions at all (nothing to index) | 0 | — 6 projects |
+| **total** | **107** | **73 % of sessions indexed** |
+
+Two things this table says plainly:
+
+**The migration is not finished.** Six projects with 29 sessions are
+still outside the store. Indexing each is one command, but it has not
+been run — and a README that implied otherwise would be the first thing
+to check and the first thing to catch us out.
+
+**Six projects have no sessions at all.** For those, Cairn can return
+nothing, and that is the honest limit of the whole approach: it indexes
+conversations that happened. Where work was done without an agent, there
+is no causality to recover.
 
 ---
 
