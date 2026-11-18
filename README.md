@@ -94,9 +94,9 @@ times the history costs the same to ask about.
 ### What the store holds, and what a query costs
 
 ```text
-held       11 720 records · 59 sessions · 2 766 files · 107 summaries
-           2.4 MB of summary text ≈ 600 000 tokens of compressed history
-           total on disk 6.0 MB, built from 2.5 GB of raw journals
+held       13 068 records · 68 sessions · 3 029 files · 119 summaries
+           2.32 MB of summary text ≈ 608 000 tokens of compressed history
+           total on disk 7.2 MB, built from 2.5 GB of raw journals
 spent      290–1 660 tokens per question, bounded in advance
 ```
 
@@ -177,27 +177,39 @@ in **87.5 %** of runs (14 of 16), the worst by **×15.6**.
 
 ## Status: what is actually on Cairn
 
-Measured today, not planned. These are the projects whose Claude Code
-journals exist on this machine:
+Measured by session ID, not estimated from folder names — the two do not
+agree, and the folder-name heuristic flattered us by 25 points.
 
-| Projects | Sessions | On Cairn |
+```text
+journals on disk        107 sessions across 15 project folders
+in the store             68 sessions  →  64 %
+                         13 068 records · 5 repositories · 119 summaries
+```
+
+### Where the other 39 sessions went
+
+| Reason | Sessions | Indexable? |
 |---|---:|---|
-| with sessions, **indexed** | 78 | ✅ 3 projects |
-| with sessions, **not yet indexed** | 29 | ⬜ 6 projects |
-| no sessions at all (nothing to index) | 0 | — 6 projects |
-| **total** | **107** | **73 % of sessions indexed** |
+| repository is **not a git repo** | 7 | ❌ never |
+| project directory **no longer exists** | 2 | ❌ never |
+| session touched no file in the repo and produced no summary | 30 | ⬜ nothing to record |
 
-Two things this table says plainly:
+Only the first two rows are losses, and both are structural: Cairn
+derives a project's identity from its git root commits, so a deleted or
+non-git directory cannot be addressed at all. The third row is the
+design working as intended — a conversation that edited nothing and was
+never compacted leaves nothing worth keeping.
 
-**The migration is not finished.** Six projects with 29 sessions are
-still outside the store. Indexing each is one command, but it has not
-been run — and a README that implied otherwise would be the first thing
-to check and the first thing to catch us out.
+**So: every project that can be indexed, is.** The number to watch is
+not "64 %" but the first two rows, and they will not improve by running
+more commands.
 
-**Six projects have no sessions at all.** For those, Cairn can return
-nothing, and that is the honest limit of the whole approach: it indexes
-conversations that happened. Where work was done without an agent, there
-is no causality to recover.
+### The limit this exposed
+
+Journals outlive repositories. Two projects here have sessions on disk
+and no directory left to attribute them to — their history is
+unreachable, permanently. If you intend to rely on this, index **before**
+you delete a project, not after.
 
 ---
 
@@ -245,7 +257,7 @@ Checked separately: of 797 PHP files that fell back to `whole`,
 
 ```text
 input            2.5 GB of journals · 1 088 files · 42 projects
-collected        11 720 records · 59 sessions · 2 766 files · 107 summaries
+collected        13 068 records · 68 sessions · 3 029 files · 119 summaries
 store size       6.0 MB, of which 2.4 MB is summary text
 ballast removed  96.6 % of the first revision was empty rows — dropped
 
