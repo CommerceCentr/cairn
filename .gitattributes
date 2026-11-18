@@ -1,0 +1,10 @@
+# No line-ending conversion.
+#
+# This machine has core.autocrlf=true, and git warned on every file at
+# commit time. For a published repository that means the next checkout
+# rewrites every line ending, producing diffs where nothing changed —
+# and the tests here compare byte-identical output, which such a rewrite
+# would quietly break.
+#
+# Keep bytes as they are, everywhere.
+* -text
