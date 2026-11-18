@@ -37,7 +37,11 @@ def main() -> int:
         print("пропущено: жодної зони з heat.tsv")
         return 0
 
-    zone = "cc.one" if "cc.one" in zs else zs[0]
+    # Зону можна назвати змінною; інакше береться перша з індексом.
+    # Вшивати тут ім'я конкретної зони не можна: у чужому архіваріусі
+    # його немає, і тест мовчки перевіряв би не те, що треба.
+    want = os.environ.get("CAIRN_TEST_ZONE", "")
+    zone = want if want in zs else zs[0]
     by_file, by_addr = arch.load(root, zone)
     print(f"зона {zone}: файлів {len(by_file)}, адрес {len(by_addr)}")
 

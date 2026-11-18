@@ -54,7 +54,7 @@ MUST_PASS = [
     "Правили core/Services/Routing/Redirector.php, бо редирект губив мову.",
     "Відкинули варіант з кешем: UrlPolicyReader не має DIR_CACHE до bootstrap.",
     "Канон comment-lint#1 забороняє прозу в докблоках.",
-    "Метод Elitty\\Services\\Update\\UpdateManager::preloadSelf довантажує класи.",
+    "Метод Acme\\Services\\Update\\UpdateManager::preloadSelf довантажує класи.",
     "Тест 171 passed / 0 failed, регресій немає.",
 ]
 
