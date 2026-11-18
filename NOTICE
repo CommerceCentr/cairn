@@ -1,0 +1,26 @@
+Cairn — portable causality store for development history
+Copyright 2026 CommerCentr (https://commercentr.com/en)
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+If you redistribute this software, in whole or in part, with or without
+modification, the Apache License requires you to:
+
+  * keep this NOTICE file with the distribution (section 4(d));
+  * include a copy of the License (section 4(a));
+  * carry prominent notices in any modified files stating that you
+    changed them (section 4(b)).
+
+Developed with the support of CommerCentr — https://commercentr.com/en

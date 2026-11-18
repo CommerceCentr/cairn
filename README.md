@@ -1,322 +1,423 @@
 # Cairn
 
-**Керн** — гірка каменів, яку мандрівники складають на перевалі, щоб
-наступний не заблукав. Ніхто не несе її з собою: її лишають на місці, і
-вона коштує рівно стільки, скільки важить камінь.
+> 🇺🇦 **Українською: [README.uk.md](README.uk.md)**
+> &nbsp;&nbsp;|&nbsp;&nbsp; License: [Apache-2.0](LICENSE)
+> &nbsp;&nbsp;|&nbsp;&nbsp; [Support the project](#support-the-project)
 
-Cairn робить те саме з історією розробки. Він будує **переносне сховище
-причинності** з того, що у вас уже є — журналів агентських сесій і
-git-історії — і відповідає на питання, якого не знає жоден інший
-інструмент: **чому цей код такий, і що вже пробували тут раніше.**
+A **cairn** is a stack of stones left on a mountain pass by the people
+who walked it before you, so the next traveller does not get lost.
+Nobody carries it along — it stays where it is, and it costs exactly as
+much as a stone weighs.
 
-Проєкт розроблено **за підтримки компанії розробників
-[CommerCentr](https://commercentr.com/en)**.
+Cairn does the same for development history. It builds a **portable
+causality store** out of what you already have — your agent's session
+journals and your git history — and answers the one question no other
+tool keeps: **why is this code the way it is, and what was already tried
+here.**
 
----
-
-## Проблема, задля якої це існує
-
-Git каже, **що** змінилось. Коміти іноді кажуть, **чому**. Але рішення
-ухвалюються в діалозі з агентом — і саме там лишаються відкинуті
-варіанти, вказівки, виміри, після яких підхід змінили. Це не потрапляє
-нікуди.
-
-Наслідок видно щодня: нова сесія починається з нуля, агент перечитує ті
-самі файли, пропонує те, що вже відкотили, і палить бюджет на
-відновлення контексту, який існував учора.
-
-```text
-виміряно на одному вузлі з 26 правками за чотири місяці:
-  ЧОТИРИ окремі латки на один і той самий дефект
-  причину жодної з них не записано в коді
-```
+Developed with the support of
+**[CommerCentr](https://commercentr.com/en)**.
 
 ---
 
-## Що робить Cairn
+## The problem
+
+Git tells you **what** changed. A good commit body sometimes tells you
+**why**. But decisions are made in conversation with an agent, and that
+is where the valuable part stays: rejected approaches, instructions from
+the person who owns the product, and measurements that overturned a
+hypothesis. None of it reaches the repository.
+
+The cost shows up daily. A new session starts from zero, re-reads the
+same files, proposes what you reverted yesterday, and burns budget
+rebuilding context that existed the day before.
+
+This is not a thought experiment. On one core class we counted:
 
 ```text
-журнали агентів  ->  переносне сховище  ->  запит «чому»
-git-історія      ->  вузли коду й документів
+26 edits over four months
+at least 4 of them fixing the SAME defect — an updater reporting
+success it had not achieved
+the reason for none of the four is recorded anywhere in the code
 ```
 
-Три команди покривають весь цикл:
+The fifth edit would have been the fifth patch.
+
+---
+
+## How it works
+
+```text
+agent session journals  ──┐
+                          ├──►  portable store  ──►  "why" query
+git history               ──┘         │
+                                      └──►  nodes of code, docs, media
+```
+
+Three commands cover the whole cycle:
 
 ```bash
-python cairn.py index --store ./store                  # зібрати
-python cairn.py why   --store ./store <шлях або вузол>  # спитати
-python cairn.py merge --store ./store --other <чуже>    # синхронізувати
+python cairn.py index --store ./store                   # collect
+python cairn.py why   --store ./store <path or node>    # ask
+python cairn.py merge --store ./store --other <theirs>  # sync devices
 ```
 
-### Бюджет, що тримається
+**Zero dependencies** — Python standard library only. No database, no
+daemon, no cloud, no format that nobody will be able to open in a year.
 
-Вивід обмежений **наперед**: спершу оцінка без побудови, потім названа
-політика, і лише тоді друк.
+### A budget that actually holds
+
+Output is bounded **before** it is produced: estimate first, then a named
+policy, then printing.
 
 ```bash
-python cairn.py why --store ./store <шлях> --priority normal
-python cairn.py why --store ./store <шлях> --budget 4000 --on-overflow ask
+python cairn.py why --store ./store <path> --priority normal
+python cairn.py why --store ./store <path> --budget 4000 --on-overflow ask
 ```
 
 ```text
---priority low|normal|high|max   агент обирає пріоритет, не число
---budget N                       тверда межа у символах
---on-overflow trim|ask|allow     обрізати · спитати · пропустити і сказати
+--priority low|normal|high|max   the agent picks a priority, not a number
+--budget N                       hard limit, in characters
+--on-overflow trim|ask|allow     trim · ask the human · pass and say so
 ```
 
-Виміряно наскрізно на 12 комбінаціях: **перевищень 0**. Для порівняння,
-зовнішній індекс, що робить те саме, перевищував бюджет у 14 випадках із
-16, найгірше ×15.6.
-
-Залежностей немає — **тільки стандартна бібліотека Python**. Ні бази, ні
-демона, ні хмари, ні формату, який через рік ніхто не відкриє.
+Measured end to end over 12 budget/size combinations: **0 % overruns.**
+For comparison, an external index doing the same job exceeded its budget
+in **87.5 %** of runs (14 of 16), the worst by **×15.6**.
 
 ---
 
-## Емпіричні дані, а не обіцянки
+## Measured results
 
-Усі числа нижче — з прогонів на реальних даних. Де вимір слабкий, це
-сказано прямо.
-
-### Обсяг і стиснення
-
-```text
-вхід           2.5 ГБ журналів, 1 088 файлів, 42 проєкти
-зібрано        11 720 записів · 59 сесій · 2 766 файлів · 107 згорток
-сховище        6.0 МБ, з них 2.4 МБ — текст згорток
-```
-
-Перша редакція зберігала 102 905 записів на 27 МБ і **не зберігала
-тексту**: 96.6 % були порожні рядки без шляхів і змісту. Баласт
-відкинуто, зміст збережено — сховище стало вчетверо меншим і вперше
-самодостатнім.
-
-### Переносність
-
-```text
-копія теки -> ті самі запити -> вивід ПОБАЙТОВО ідентичний
-пристрій зі старим зрізом:  2 621 запис · 26 сесій
-  після merge:             11 720 записів · 59 сесій  (+9 099)
-  повторний merge:         додано 0
-```
-
-Злиття ідемпотентне, бо адреса запису не залежить від того, як сховище
-будували: вона тримається на власному ідентифікаторі події агента.
-Порядковий номер для цього не годиться — виміряно, що він обнуляється
-при інкрементному читанні, і подія діставала б різні ключі.
-
-### Приватність
-
-```text
-редаговано на живих даних: 418 збігів
-  зокрема РЕАЛЬНИЙ рядок підключення з паролем
-у сховищі:  0 абсолютних шляхів · 0 згадок імені користувача
-```
-
-14 форм секретів (ключі провайдерів, JWT, bearer, приватні ключі, рядки
-підключення, машинні шляхи). Перелік обходу прогнано: **14 підробок із
-14 спіймано**, 5 звичайних речень про код пройшли недоторканими, після
-редакції сканер не бачить нічого.
-
-### Вузли: збіг із незалежним еталоном
-
-**PHP** — проти індексу, побудованого іншим інструментом, іншою мовою.
-Чотири різні проєкти, по 120 файлів:
-
-```text
-повнота: 0.887 · 0.939 · 0.938 · 0.919
-```
-
-**Python** — проти `ast` зі стандартної бібліотеки, тобто еталон
-об'єктивний:
-
-```text
-977 файлів · 100.0 % точного збігу · 15 669 вузлів = 15 669 еталонних
-```
-
-**Markdown** — 28 файлів, 100 %, 299 розділів (еталон власний, тож це
-перевірка узгодженості, а не істини).
-
-Окремо перевірено, чи не губимо файли цілком: із 2 500 PHP-файлів 797
-дали `whole:` — і в **жодному** з них немає оголошень. Пропусків нуль.
-
-### Різнотипні активи: що саме покривається
-
-5 000 файлів двох проєктів, 28 683 вузли:
-
-```text
-whole    3 511  70.2 %   дані й бінарне: .dat, без розширення, .exe
-symbol   1 461  29.2 %   код
-section     28   0.6 %   документи
-```
-
-Усі числа й те, **чого кожен вимір не доводить**, — у
+Every number below comes from a run on real data. Where a measurement is
+weak, the document says so. Full tables, references and caveats:
 [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
-### Скільки це економить
+### Node extraction accuracy
 
-Порівнювався **однаковий вміст** двома шляхами — через інструмент і
-вручну:
+| Language | Reference | Files | Exact match | Note |
+|---|---|---:|---:|---|
+| Python | `ast`, the language's own parser | 977 | **100.0 %** | 15 669 nodes = 15 669 reference |
+| Markdown | independent heading counter | 28 | **100.0 %** | 299 sections |
+| PHP | index built by a different tool, in a different language | 4 × 120 | recall **88.7 / 93.9 / 93.8 / 91.9 %** | declaration scanner, not a parser |
+
+Python scores 100 % because the extractor uses the language's own
+parser — that is the point, not a boast: a hand-written scanner is
+written **only** where the language gives you nothing.
+
+For PHP, *precision against that reference is deliberately not counted*:
+the reference file is a **heat index** listing only nodes that were ever
+changed, not all of them.
+
+### Heterogeneous assets
+
+5 000 files across a PHP monolith and a Python application, 28 683 nodes:
+
+| Node kind | Files | Share |
+|---|---:|---:|
+| `whole` (file as one node) | 3 511 | **70.2 %** |
+| `symbol` (class, method, function) | 1 461 | **29.2 %** |
+| `section` (document headings) | 28 | **0.6 %** |
+
+Most of `whole` is data and binaries: `.dat`, extensionless, `.exe`,
+`.lock`. For those, "address the file as a whole" is the correct answer,
+not a failure — an unknown type never breaks the tool, it only gets a
+coarser address.
+
+Checked separately: of 797 PHP files that fell back to `whole`,
+**0 %** actually contained declarations. Nothing is silently lost.
+
+### Store, privacy, portability
 
 ```text
-вузол                 інструмент   вручну    разів
-Redirector::handle        5 592 Б   70 727 Б   12.6
-MarketplaceClient         4 891 Б  120 815 Б   24.7
-PatchApplier              8 660 Б   96 417 Б   11.1
+input            2.5 GB of journals · 1 088 files · 42 projects
+collected        11 720 records · 59 sessions · 2 766 files · 107 summaries
+store size       6.0 MB, of which 2.4 MB is summary text
+ballast removed  96.6 % of the first revision was empty rows — dropped
+
+redaction        418 matches on live data, including a REAL database
+                 connection string with a password
+in the store     0 absolute paths · 0 occurrences of the user's name
+redactor gate    100 % (14 of 14 planted secrets caught,
+                 5 of 5 ordinary sentences left untouched)
+
+portability      copying the folder gives BYTE-IDENTICAL query output
+merge            2 621 + 9 099 = 11 720 · repeat merge adds 0
 ```
 
-Ручний бік **занижено**: він покриває один файл, пакет — два-чотири.
+### Context economy
 
-Окремо: **прибрана з коду проза** (докблоки, вивезені під час чистки) у
-`git log` відсутня взагалі — 0 збігів. Єдиний інший шлях до неї,
-`git log -p`, коштує **22×**.
+The same content, reconstructed two ways — through the index, and by
+hand:
+
+| Node | Index | By hand | Cheaper |
+|---|---:|---:|---:|
+| A | 5 592 B | 70 727 B | **×12.6** |
+| B | 4 891 B | 120 815 B | **×24.7** |
+| C | 8 660 B | 96 417 B | **×11.1** |
+
+The manual side is **understated**: it covers one file, the index covers
+two to four.
+
+Separately, and this matters more than the ratio: documentation prose
+that was stripped out of the code during cleanup appears **0 times** in
+`git log`. The only other route to it, `git log -p`, costs **×22**.
 
 ---
 
-## Що саме дає Cairn — по ролях
+## What this is for, and who gains
 
-### Користувачеві
+A percentage explains nothing on its own. Each block below follows the
+same shape: **situation → without the tool → with it → what proves it.**
+The number comes last, as evidence rather than as a slogan.
 
-```text
-«чому воно так»       відповідь за секунди замість археології
-менше повторів        видно, що вже пробували й відкотили
-нічого не ставити     один Python, жодних залежностей
-дані лишаються ваші   сховище локальне, нікуди не йде
-```
+### For the developer
 
-### Агентові
+**Situation.** You open a file you did not write — or wrote six months
+ago. The code does something odd, and you cannot tell whether that is a
+bug or a decision.
 
-```text
-контекст наперед      готовий пакет замість десятка читань файлів
-памʼять між сесіями   згортки попередніх сесій доступні наступній
-менше вигадування     причина береться з запису, а не з припущення
-самопідключення       AGENT-ONBOARD.md: агент пише собі адаптер сам
-```
+**Without.** You read the code. Then `git log`, to find when it
+appeared. Then `git log -p`, because commit subjects do not carry
+reasons. That is **70–120 KB** of text to scroll through for a single
+node. And if the prose was ever stripped out of the docblocks, plain
+`git log` does not contain it **at all** — you do not even know there is
+something to look for.
 
-### Проєктові
+**With.** One command returns the history of that exact method: what was
+done, what was reverted and why, plus the stripped prose verbatim.
+**5–9 KB** instead of a hundred.
 
-```text
-гарячі точки          вузли, які переписували найчастіше — виміряно
-сліпі місця           багато правок і нуль задач = правили без причини
-історія вузла         не файла, а саме методу чи класу
-документи теж         розділи .md адресуються так само, як символи коду
-```
+**Evidence.** ×11.1–24.7 on three nodes of a real project, comparing
+identical content. Stripped prose: 0 hits in `git log`, ×22 via
+`git log -p`. *Limit: three nodes of one project.*
 
-### Команді
+### For the agent
 
-```text
-онбординг             новий учасник питає «чому», а не «хто це писав»
-передача справ        контекст лишається у сховищі, не в голові
-кілька пристроїв      merge зводить сховища без дублів
-кілька агентів        Claude, Codex, свій — один формат на всіх
-```
+**Situation.** A new session remembers nothing. Yesterday's decisions,
+rejected options, your instructions — all gone with the context window.
 
-### Компанії
+**Without.** The agent re-reads the same files, proposes what you
+reverted yesterday, and spends its window rebuilding what was already
+known. You pay twice for one piece of knowledge.
 
-```text
-бюджет                економія на відновленні контексту виміряна
-знання не йдуть       із людиною не зникає «чому»
-аудит рішень          видно, хто, коли і на підставі чого
-приватність           секрети вирізаються до запису у сховище
-```
+**With.** Compaction summaries of earlier sessions sit next to the node.
+More importantly, the **budget bounds the output in advance**: the agent
+knows the price of context before receiving it, and can plan the rest of
+the work around it.
+
+**Evidence.** **0 %** budget overruns (0 of 12 combinations) against
+**87.5 %** (14 of 16) in an external index doing the same job.
+
+### For the project
+
+**Situation.** There is a feeling that some module is "problematic", but
+where the code actually rots is unknown.
+
+**Without.** Decisions are made on impression: somebody remembers that
+things keep breaking around here.
+
+**With.** A rewrite counter per node. A line reading "many edits, zero
+tasks" means the place was patched **with no reason recorded anywhere**,
+and the next edit will be blind.
+
+**Evidence.** On a real node — **26 edits in four months**, at least
+**four** of them fixing one and the same defect. Not one of the four
+recorded why.
+
+### For the team
+
+**Situation.** A person leaves, and the knowledge leaves with them.
+
+**Without.** "Ask whoever wrote it" — except they are gone. Onboarding
+turns into archaeology.
+
+**With.** Context lives in the store, moves by copying a folder, and
+merges across devices without duplicates. A new teammate asks *why*
+rather than *who*.
+
+**Evidence.** merge 2 621 + 9 099 = **11 720**, a repeat merge adds
+**0**. A copied folder produces **byte-identical** output.
+
+### For the company
+
+Three things visible in the report, none of them about convenience.
+
+**1. Budget.** Context reconstruction is a daily cost nobody measures,
+because it is smeared across every task. The measured difference is
+×11–25 **per lookup**. At dozens of lookups a day it shows up in the
+invoice, not in the mood. *Limit: measured on three nodes of one
+project; your codebase will give its own number.*
+
+**2. Knowledge as an asset.** Causality stops being oral tradition and
+becomes **data** — transferable, mergeable, verifiable, and handed over
+together with the project. Roughly what version control once did for
+code, but for *why* instead of *what*.
+
+**3. Repetition risk.** Re-fixing the same defect costs more than time.
+In the measured example one class of defect survived **four** patches,
+because each time the case was fixed instead of the mechanism. Making a
+node's history visible is the cheapest known way to stop that.
+
+**What Cairn does NOT give a company.** It does not replace
+documentation, does not make decisions for people, and does nothing at
+all where no agent sessions existed: in our own measurement, two
+projects out of four had **zero** journals, and for them the channel is
+empty.
 
 ---
 
-## Будова
+## Architecture
 
 ```text
-cairn.py          єдина точка входу
+cairn.py           single entry point
 core/
-  contract.py     схема запису + ворота
-  store.py        сховище, злиття, дедуплікація
-  paths.py        тотожність репозиторію, відносні шляхи
-  manifest.py     інкрементність: sha256 зрізу
-  redact.py       скан секретів
-  selftest.py     ворота адаптера
+  contract.py      record schema + gates
+  store.py         storage, merge, deduplication
+  paths.py         repository identity, relative paths
+  manifest.py      incrementality: sha256 of a byte prefix
+  redact.py        secret scanning
+  budget.py        estimate-first output budget
+  selftest.py      adapter gate
 adapters/
-  claude_code.py  еталонний збирач журналів
-  _probe_*.py     підробки для переліку обходу
+  claude_code.py   reference journal collector
+  _probe_*.py      deliberate fakes for the bypass list
 extract/
-  code_php.py     символи PHP (власний сканер)
-  code_python.py  символи Python (через ast)
-  doc_markdown.py розділи документів
-  media_sidecar.py відрізки аудіо й відео з субтитрів
+  code_php.py      PHP symbols (own scanner)
+  code_python.py   Python symbols (via ast)
+  doc_markdown.py  document sections
+  media_sidecar.py audio/video segments from subtitles
 bind/
-  php_archivist.py необовʼязково: зовнішній індекс символів
-tests/            перелік обходу для кожного шару
+  php_archivist.py optional: external symbol index
+tests/             a bypass list for every layer
 ```
 
-### Модель вузла
+### The node model
 
-Вузол — **адресована частина активу**, з мірою, природною для його типу:
+A node is an **addressable part of an asset**, measured in the unit
+natural to its type:
+
+| kind | unit | example address | what it is |
+|---|---|---|---|
+| `symbol` | byte | `method:Ns\Class::name` | class, method, function |
+| `section` | byte | `section:Intro/Limits` | heading and its text |
+| `segment` | second | `segment:00:04:12` | audio or video range |
+| `whole` | none | `whole:` | the file as a single node |
+
+An unknown type is **not an error**: it degrades to `whole:`. The tool
+never breaks, it only gets coarser.
+
+Everywhere, the address is **content, not position**: a symbol rather
+than a line number, a heading path rather than a section number, a
+timecode rather than a caption index. A number shifts the moment
+anything above it is inserted.
+
+### Portability
 
 ```text
-kind     unit     приклад адреси                 що це
-symbol   byte     method:Ns\Class::name          клас, метод, функція
-section  byte     section:Вступ/Межі             заголовок і текст під ним
-segment  second   segment:00:04:12               відрізок аудіо чи відео
-whole    none     whole:                         файл як один вузол
-```
-
-Невідомий тип **не є помилкою**: для нього повертається `whole:`.
-Інструмент не ламається ніколи — лише дає грубішу адресу.
-
-Скрізь адресується **зміст, не позиція**: символ, а не номер рядка; шлях
-заголовка, а не номер розділу; таймкод, а не номер репліки. Номер
-зсувається від будь-якої вставки вище.
-
-### Переносність
-
-```text
-repo_id   відбиток НАБОРУ кореневих комітів: однаковий у будь-якому
-          клоні, на будь-якій машині, у будь-якого акаунта
-шляхи     тільки відносні від кореня репозиторію
-машина    записана як метадані, у ключ не входить
-сховище   тека з JSONL; перенесення = копіювання
+repo_id   fingerprint of the SET of root commits — identical in any
+          clone, on any machine, for any account
+paths     relative to the repository root, only
+machine    recorded as metadata, never part of a key
+store     a folder of JSONL; transfer = copy
 ```
 
 ---
 
-## Підключити свого агента
+## Integration
 
-Не чекайте на коннектор. Покладіть `AGENT-ONBOARD.md` туди, звідки ваш
-агент читає правила — він підключить себе сам. Ворота `selftest`
-перевірять результат і відхилять підробку:
+```text
+level 0   the CLI as it is          works today, nothing to install
+level 1   a Skill                   the agent decides WHEN to ask
+level 2   a plugin (hooks + skill)  the tool becomes part of the setup
+```
+
+The criterion is not preference but **who initiates the call**. An
+action that must happen at a fixed point — after a session, before an
+edit — is a hook. An action whose necessity the model judges is a skill.
+
+By that criterion an MCP server is not needed here: MCP earns its keep
+when you need structured answers from a long-lived process, and this is
+a one-shot script.
+
+See [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the step-by-step
+setup, including the plugin layout and its caveats.
+
+### Connecting your own agent
+
+Do not wait for a connector. Drop
+[`AGENT-ONBOARD.md`](AGENT-ONBOARD.md) wherever your agent reads its
+rules — it will connect itself. The `selftest` gate checks the result
+and rejects a fake adapter:
 
 ```bash
 python cairn.py selftest --store ./store --adapter _probe_empty    # exit 1
 python cairn.py selftest --store ./store --adapter claude_code     # exit 0
 ```
 
-Другий рядок обовʼязковий: без нього відхилення нічого не доводило б —
-ворота могли б відхиляти геть усе.
+The second line is mandatory: without it, rejection would prove nothing
+— a gate that rejects everything also rejects fakes.
 
 ---
 
-## Межі, названі чесно
+## Limits, stated plainly
 
 ```text
-* сховище містить ТІЛЬКИ згортки компакції, не сире листування;
-* перелік секретів скінченний: що не розпізнано, те не захищено.
-  Саме тому текст обмежений згортками;
-* видобувач PHP — сканер оголошень, не парсер. Екзотичний синтаксис
-  пропустить: повнота 0.887, а не 1.0, і це виміряно, а не оцінено;
-* репозиторій без сесій дає порожню відповідь, і це нормально:
-  інструмент не вигадує того, чого не було;
-* звʼязок «згортка -> вузол» СЕСІЙНИЙ, а не причинний: він означає
-  «файла цього вузла торкались у сесії, яка дала цю згортку»;
-* зовнішній індекс символів (bind) необовʼязковий, і його бюджет не є
-  жорсткою межею — виміряно перевищення до ×15.6 на широкому відборі;
-* інструкцію самопідключення перевірено лише на одному агенті.
+* the store keeps ONLY compaction summaries, never raw conversation;
+* the secret list is finite: what is not recognised is not protected.
+  That is precisely why only summaries are stored;
+* the PHP extractor is a declaration scanner, not a parser. Exotic
+  syntax is missed: recall is 0.887–0.939, not 1.0 — measured, not
+  estimated;
+* a repository with no sessions returns an empty answer, and that is
+  correct behaviour: the tool does not invent what never happened;
+* the summary→node link is SESSION-level, not causal: it means "a file
+  of this node was touched in a session that produced this summary";
+* session journal format is internal to the agent and may change
+  between versions; the adapter is a sample, not a contract;
+* the self-onboarding instruction has so far been verified with one
+  agent only.
 ```
 
 ---
 
-## Ліцензія
+## License
 
-Ще не обрана.
+**[Apache-2.0](LICENSE)** — free to use, including commercially.
+
+What the license asks of you if you take the code:
+
+```text
+§4(a)  ship a copy of the license alongside it
+§4(b)  in modified files, STATE that you changed them
+§4(d)  keep the NOTICE file in derivative works
+§3     an explicit patent grant, in both directions
+```
+
+In short: use it freely, but **do not lose the source**, and say where
+you departed from the original.
 
 ---
 
-Розроблено за підтримки **[CommerCentr](https://commercentr.com/en)** —
-компанії, що будує маркетплейс і CMS із власним AI-контуром.
+## Support the project
+
+Cairn is open and free. If it saved you time:
+
+> **For motivating the development of new ideas**
+
+```text
+network   TRON (TRC-20)
+address   TZ5veYdk67o3dWNHHLRaBpdXw3fJHt3w5V
+```
+
+<img src="docs/donate-tron.png" alt="TRON wallet QR code for supporting Cairn" width="200">
+
+> The address is given as text on purpose, so it can be verified
+> character by character. The QR was not generated automatically — it is
+> a file provided by the wallet owner.
+
+---
+
+Developed with the support of
+**[CommerCentr](https://commercentr.com/en)** — the company building a
+marketplace and CMS with its own AI layer.
