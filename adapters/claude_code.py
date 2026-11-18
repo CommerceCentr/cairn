@@ -19,14 +19,27 @@ import json
 import os
 
 PATH_KEYS = ("file_path", "notebook_path", "path", "filePath")
-DEFAULT_ROOT = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 
 NAME = "claude_code"
 
 
+def default_root() -> str:
+    """Тека журналів: `CLAUDE_CONFIG_DIR` має перевагу над `~/.claude`.
+
+    Не константа навмисно. `docs/INTEGRATION.md` обіцяє не прибивати
+    `~/.claude` цвяхами, а стара редакція саме це й робила — ще й на час
+    імпорту, тож змінна, виставлена пізніше, не діяла б. Наслідок був
+    мовчазний: з перенесеним конфігом адаптер віддавав нуль журналів,
+    що виглядає як «історії немає», а не як «я шукав не там».
+    """
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
+        os.path.expanduser("~"), ".claude")
+    return os.path.join(base, "projects")
+
+
 def discover(root: str | None = None) -> list[str]:
     """Усі журнали. Порожній список — теж відповідь, і ворота її відхилять."""
-    base = root or DEFAULT_ROOT
+    base = root or default_root()
     out: list[str] = []
     if not os.path.isdir(base):
         return out
