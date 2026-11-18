@@ -43,9 +43,11 @@ MUST_CATCH = [
     ("BEARER", "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123"),
     ("PASSWORD", "password = hunter2secret"),
     ("CONNSTR", "postgres://user:pa55word@db.local:5432/app"),
-    ("WIN_HOME", r"C:\Users\Vaso\AppData\Local\Temp"),
-    ("NIX_HOME", "/home/vasyl/projects/app"),
-    ("WIN_DRIVE", "Q:/650/home/beta.loc/core/X.php"),
+    # Імена вигадані навмисно: публічний репозиторій не має рознести
+    # акаунт автора як зразок. Для редактора форма та сама.
+    ("WIN_HOME", r"C:\Users\jdoe\AppData\Local\Temp"),
+    ("NIX_HOME", "/home/jdoe/projects/app"),
+    ("WIN_DRIVE", "Q:/work/home/example.loc/core/X.php"),
 ]
 
 MUST_PASS = [

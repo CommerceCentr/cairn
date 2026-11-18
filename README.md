@@ -114,12 +114,16 @@ python cairn.py stats --store ./store                     # what is indexed
 ```text
 --priority  low 2 000 · normal 8 000 · high 24 000 · max 100 000 chars
 --on-overflow  trim (default) · ask · allow
-exit 0  answer printed, or an honest empty answer
-exit 1  no store, unknown adapter, or a failed self-test
+
+exit 0  an answer was printed (`stats` always exits 0)
+exit 1  nothing found: no session ever touched that file or node —
+        this is an ANSWER, not a failure. Also: a rejected adapter
+exit 2  usage: no --zone, or no archivist root for `bind`
 ```
 
-An empty answer means no session ever discussed that node. It is not an
-error, and it must not be filled with a guess.
+Exit 1 is the one to get right. It does not mean the tool broke; it
+means the history is silent, and silence must not be filled with a
+guess.
 
 ---
 
