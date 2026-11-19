@@ -1,0 +1,26 @@
+name: unified-v2
+
+# Локальний, офлайн-конвеєр: жодного хмарного API, жодного real LLM.
+# Скрипти є самостійними (pytest у проєкті немає), тож CI просто викликає
+# єдиний runner, який повертає глобальний exit code.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Індексація коду вимагає PHP CLI (code/php.py:86). Без нього
+      # test_unified_vs01.py падає з php_unavailable — тож ставимо явно.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: none
+      - name: Run all Unified checks
+        run: python tests/run_all.py
