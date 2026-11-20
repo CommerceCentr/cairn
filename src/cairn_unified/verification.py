@@ -84,11 +84,96 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         else:
             reasons.append("unresolved:pack_missing")
 
+    if sem.get("kind") == "session":
+        # Тотожність сесії — реальний рядок компактації в opencode.db, а не
+        # SHA коміту й не власний текст агента. Джерело читається з БД
+        # адаптером у режимі mode=ro; НЕ з payload об’єкта, бо звірка самого
+        # себе з собою була б тавтологією (виміряний клас помилок №13).
+        db_path = str(sem.get("opencode_db") or "")
+        msg_id = str(sem.get("compaction_message_id") or "")
+        source = None
+        if db_path and msg_id:
+            try:
+                import sys
+                root = Path(__file__).resolve().parents[2]
+                if str(root) not in sys.path:
+                    sys.path.insert(0, str(root))
+                from adapters import opencode
+                source = opencode.compaction(db_path, str(sem.get("session_id") or "") or None,
+                                             message_id=msg_id)
+            except Exception:
+                source = None
+        if source is not None:
+            if sha256_text(str(source.get("summary") or "")) == sem.get("summary_sha256"):
+                checks.append({"check": "session_summary_matches",
+                               "value": str(sem.get("summary_sha256"))[:12]})
+            else:
+                reasons.append("unresolved:session_summary_mismatch")
+            keep_id = str(source.get("keep_id") or "")
+            if keep_id == str(sem.get("keep_id") or ""):
+                checks.append({"check": "session_keep_id_matches", "value": keep_id[-12:]})
+            else:
+                reasons.append("unresolved:session_keep_id_mismatch")
+        else:
+            reasons.append("unresolved:session_source_unavailable")
+
+    if sem.get("kind") == "auto_compaction":
+        # Автокомактація не має права свідчити сама за себе: кожен намір
+        # перечитується з opencode.db у mode=ro і звіряється за digest тексту.
+        # Джерело — user-повідомлення, а не згенерований агентами текст.
+        db_path = str(sem.get("opencode_db") or "")
+        refs = sem.get("intent_refs") or []
+        source_texts: dict[str, str] = {}
+        if db_path:
+            try:
+                import sys
+                root = Path(__file__).resolve().parents[2]
+                if str(root) not in sys.path:
+                    sys.path.insert(0, str(root))
+                from adapters import opencode
+                for rec in opencode.read(db_path,
+                                         str(sem.get("session_id") or "") or None):
+                    if rec["kind"] == "user_intent":
+                        source_texts[str(rec["message_id"])] = str(rec["text"])
+            except Exception:
+                source_texts = {}
+        if not refs:
+            reasons.append("unresolved:auto_compaction_no_intent_refs")
+        else:
+            bad = [str(r.get("message_id")) for r in refs
+                   if sha256_text(source_texts.get(str(r.get("message_id") or ""), ""))
+                   != r.get("text_sha256")]
+            if bad:
+                reasons.append("unresolved:auto_compaction_intent_mismatch:"
+                               + ",".join(bad[:2]))
+            else:
+                checks.append({"check": "auto_compaction_intents_match_db",
+                               "value": str(len(refs))})
+
     addresses = [str(x) for x in (sem.get("scope") or [])]
     if sem.get("node_address"):
         addresses.append(str(sem["node_address"]))
+    # Сесія не має одного scope: вона пов'язана з багатьма вузлами ребрами
+    # `caused_by`, і кожне ребро вже перевірено через nodes.resolve на момент
+    # створення. Тому для сесії перевіряємо наявність хоча б одного такого
+    # ребра з індексованим вузлом, а не вимагаємо `scope` (інакше сесія з 29
+    # підтвердженими мутаціями завжди ескалувала б з node_absent).
+    if sem.get("kind") == "session" and not addresses:
+        linked = store.read_one(
+            "SELECT r.from_id FROM relations r "
+            "JOIN code_symbols c ON c.stable_key = r.from_id "
+            "WHERE r.to_id = ? AND r.relation_type = 'caused_by' LIMIT 1",
+            (str(body.get("id") or ""),),
+        )
+        if linked:
+            checks.append({"check": "session_has_indexed_node",
+                           "value": str(linked["from_id"])[:40]})
+            addresses = [str(linked["from_id"])]
+        else:
+            reasons.append("unresolved:session_no_indexed_node")
     if not addresses:
-        reasons.append("unresolved:node_absent")
+        if sem.get("kind") != "session":
+            reasons.append("unresolved:node_absent")
     else:
         found = False
         for addr in addresses:

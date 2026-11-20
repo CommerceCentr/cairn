@@ -9,8 +9,15 @@
 по рядку JSON на подію. Корисні поля: type, message.content[], uuid,
 timestamp, sessionId, cwd, isCompactSummary.
 
-Вміст повідомлень НЕ читається: беремо шляхи з tool_use і позначку
-компакції. Так дешевше й безпечніше.
+Проза асистента НЕ читається: беремо лише шляхи з МУТАЦІЙНИХ tool_use
+і позначку компакції. Виняток, доданий 2026-11-20 за уточненням користувача:
+текст USER-повідомлення повертається як корінь «чому» (його намір); шляхів
+він не дає. 2026-11-20 виміряно на 1096 журналах: Write 216
+і Edit 61 змінюють файл, а Read 229, Grep 63, Glob 15 мають ті самі
+поля шляху, але файл не змінюють. Старий фільтр за наявністю ключа
+шляху давав 307 хибних «дотиків» на 277 справжніх мутацій. Bash (1800)
+не має поля шляху, тож класифікувати його без читання command було б
+вгадуванням — свідомо не робимо.
 """
 
 from __future__ import annotations
@@ -19,6 +26,10 @@ import json
 import os
 
 PATH_KEYS = ("file_path", "notebook_path", "path", "filePath")
+
+#: Тільки ті інструменти, чия назва сама означає CrUD. Розширювати
+#: списком «можливо, мутує» не можна: це повернуло б Read під іншою назвою.
+MUTATING_TOOLS = frozenset({"Write", "Edit"})
 
 NAME = "claude_code"
 
@@ -100,6 +111,9 @@ def read(path: str, offset: int = 0):
             if rec.get("isCompactSummary") is True:
                 # Єдиний текст, який цей адаптер віддає. Редакцію робить
                 # ядро: адаптер не має вирішувати, що безпечно.
+                # Шляхи з text НЕ додаємо: згадка назви в чаті не є CrUD
+                # (Spec_UA.md:603). Компактація тримається сесії через
+                # session_id, а сесія — вузлів через мутації.
                 yield {"actor": "agent", "kind": "compact_summary", "ts": ts,
                        "abs_paths": [], "session_id": sid, "cwd": cwd, "event_id": eid,
                        "text": _text_of(rec)}
@@ -113,9 +127,15 @@ def read(path: str, offset: int = 0):
             content = msg.get("content") if isinstance(msg, dict) else None
 
             found: list[str] = []
+            operations: list[str] = []
+            saw_tool = False
             if isinstance(content, list):
                 for blk in content:
                     if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                        continue
+                    saw_tool = True
+                    name = blk.get("name")
+                    if name not in MUTATING_TOOLS:
                         continue
                     inp = blk.get("input")
                     if not isinstance(inp, dict):
@@ -124,11 +144,25 @@ def read(path: str, offset: int = 0):
                         v = inp.get(k)
                         if isinstance(v, str) and v:
                             found.append(v)
+                            operations.append(str(name))
 
             if found:
                 yield {"actor": "tool", "kind": "tool_call", "ts": ts,
-                       "abs_paths": found, "session_id": sid, "cwd": cwd, "event_id": eid}
+                       "abs_paths": found, "session_id": sid, "cwd": cwd,
+                       "event_id": eid, "operations": operations}
+            elif saw_tool:
+                # Інструмент був, але не мутація. Подія лишається, шляхів
+                # немає: збирач відкине її як баласт, не зробивши вигляду,
+                # що сесія «торкнулася» файлу під час читання.
+                yield {"actor": "tool", "kind": "tool_call", "ts": ts,
+                       "abs_paths": [], "session_id": sid, "cwd": cwd,
+                       "event_id": eid, "operations": []}
             else:
+                # Текст користувача — корінь «чому» (його намір), але він НЕ
+                # дає шляхів: згадка файлу в проханні не є CrUD. Збирач
+                # мапить user-повідомлення з text у `user_intent`; сам адаптер
+                # не змінює kind, щоб не ламати вже перевірений контракт.
                 yield {"actor": "user" if rtype == "user" else "agent",
                        "kind": "message", "ts": ts, "abs_paths": [],
-                       "session_id": sid, "cwd": cwd, "event_id": eid}
+                       "session_id": sid, "cwd": cwd, "event_id": eid,
+                       "text": _text_of(rec) if rtype == "user" else ""}

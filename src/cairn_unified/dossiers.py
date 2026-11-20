@@ -53,24 +53,29 @@ def _is_prose(raw: str) -> bool:
     return stripped.startswith(PROSE_MARKERS) or stripped.startswith("*")
 
 
-def _changed_files(repo: Path) -> dict[str, list[str]]:
-    """commit -> список PHP-файлів, яких він торкнувся."""
+def _changed_files(repo: Path, pathspec: str = "*.php") -> dict[str, list[str]]:
+    """commit -> список файлів, яких він торкнувся.
+
+    За замовчуванням `*.php` — чотири PHP-зони не міняємо. Для 5-ї зони
+    `cairn` передаємо `*.py`: інакше з 14 файлів коміту 8c1eea5 потрапив би
+    один PHP-файл замість 108 індексованих вузлів (виміряно).
+    """
     out: dict[str, list[str]] = {}
     sha = ""
     for line in git.git(str(repo), "log", "--format=" + COMMIT_SEP + "%H",
-                        "--name-only", "--", "*.php").splitlines():
+                        "--name-only", "--", pathspec).splitlines():
         if line.startswith(COMMIT_SEP):
             sha = line[len(COMMIT_SEP):].strip()
             out.setdefault(sha, [])
-        elif sha and line.strip().endswith(".php"):
+        elif sha and line.strip().endswith(pathspec.lstrip("*")):
             out[sha].append(line.strip())
     return out
 
 
-def _commits(repo: Path) -> list[dict]:
+def _commits(repo: Path, pathspec: str = "*.php") -> list[dict]:
     raw = git.git(str(repo), "log",
                   "--format=" + COMMIT_SEP + "%H%x09%cI%x09%s%x09%b%x00",
-                  "--", "*.php")
+                  "--", pathspec)
     out: list[dict] = []
     for record in raw.split("\x00"):
         record = record.strip()
@@ -84,14 +89,14 @@ def _commits(repo: Path) -> list[dict]:
     return sorted(out, key=lambda row: (row["date"], row["sha"]))
 
 
-def _removed_prose(repo: Path) -> dict[tuple[str, str], list[str]]:
+def _removed_prose(repo: Path, pathspec: str = "*.php") -> dict[tuple[str, str], list[str]]:
     """(file, commit) -> витерті рядки прози з diff."""
     out: dict[tuple[str, str], list[str]] = {}
     sha = ""
     path = ""
     used = 0
     for line in git.git(str(repo), "log", "-p", "--format=" + COMMIT_SEP + "%H",
-                        "--", "*.php").splitlines():
+                        "--", pathspec).splitlines():
         if line.startswith(COMMIT_SEP):
             sha = line[len(COMMIT_SEP):].strip()
             path = ""
@@ -117,12 +122,16 @@ def _removed_prose(repo: Path) -> dict[tuple[str, str], list[str]]:
 
 
 def build_pack(repo: Path, zone: str, *, min_events: int = 3,
-               head: str | None = None) -> tuple[str, dict]:
-    """Сформувати текст пака й статистику для однієї зони."""
+               head: str | None = None, pathspec: str = "*.php") -> tuple[str, dict]:
+    """Сформувати текст пака й статистику для однієї зони.
+
+    `pathspec` за замовчуванням `*.php` — чотири PHP-зони лишаються
+    побайтово незмінними. 5-та зона `cairn` передає `*.py`.
+    """
     head = head or git.git(str(repo), "rev-parse", "--short=7", "HEAD").strip()
-    commits = _commits(repo)
-    changed = _changed_files(repo)
-    prose = _removed_prose(repo)
+    commits = _commits(repo, pathspec)
+    changed = _changed_files(repo, pathspec)
+    prose = _removed_prose(repo, pathspec)
     by_sha = {row["sha"]: row for row in commits}
 
     nodes: dict[str, list[dict]] = {}

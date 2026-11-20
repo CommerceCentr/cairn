@@ -21,6 +21,9 @@ RELATION_REGISTRY: dict[str, dict] = {
     "calls": {"effect": "none", "blocks": False},
     "depends_at_runtime_on": {"effect": "none", "blocks": False},
     "caused_by": {"effect": "none", "blocks": False},
+    #: CrUD-участь коміту в вузлі — окреме твердження, не причинність.
+    #: Ставиться тільки з rev-parse-резолвованого `git show --name-status`.
+    "mutated": {"effect": "none", "blocks": False},
     "discovered_during": {"effect": "none", "blocks": False},
     "derived_from": {"effect": "none", "blocks": False},
     "supports": {"effect": "none", "blocks": False},
