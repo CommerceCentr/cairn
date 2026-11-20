@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from adapters import opencode  # noqa: E402
 from cairn_unified import causal_history, code, semantic, verification, work  # noqa: E402
@@ -140,21 +140,31 @@ def main() -> int:
         checks.append(("git history дає mutated", len(report["history_mutated"]) >= 1))
         checks.append(("намір користувача в автокомактації",
                        INTENT in report["auto_compaction_text"]))
-        checks.append(("три об'єкти створені", len(objects) == 3))
+        checks.append(("п'ять об'єктів створені", len(objects) == 5))
         checks.append(("усі об'єкти верифіковані джерелами",
-                       len(verified) == 3 and all(v["verified"] for v in verified.values())))
+                       len(verified) == 5 and all(v["verified"] for v in verified.values())))
         checks.append(("вузол -> сесія через caused_by",
                        any(r[1] == "caused_by" and r[2] == objects[0] for r in rels)))
         checks.append(("commit_fact -> вузол через mutated",
-                       any(r[1] == "mutated" and r[0] == objects[1] for r in rels)))
+                       any(r[1] == "mutated" and r[0] == objects[3] for r in rels)))
         checks.append(("автокомактація -> сесія через derived_from",
-                       any(r[1] == "derived_from" and r[0] == objects[2]
+                       any(r[1] == "derived_from" and r[0] == objects[4]
                            and r[2] == objects[0] for r in rels)))
         checks.append(("коміт не став причиною",
-                       not any(r[1] == "caused_by" and r[0] == objects[1] for r in rels)))
-        checks.append(("контекст містить і причину, і коміт",
+                       not any(r[1] == "caused_by" and r[0] == objects[3] for r in rels)))
+        checks.append(("«чому відкинуто» має власний об'єкт",
+                       report["unresolved_object_id"] == objects[1]
+                       and _object(store, objects[1])["semantic"]["kind"]
+                       == "unresolved_mutations"))
+        checks.append(("дескриптор зони має власний об'єкт",
+                       report["zone_object_id"] == objects[2]
+                       and _object(store, objects[2])["semantic"]["kind"]
+                       == "zone_descriptors"
+                       and len(report["zone_descriptors"]) == 1))
+        checks.append(("контекст містить причину, відкинуте, зону й коміт",
                        report["context_digest"] is not None
-                       and len(report["context_shown"]) >= 2))
+                       and len(report["context_shown"]) >= 3
+                       and objects[1] in report["context_shown"]))
         checks.append(("повтор не подвоює ребра",
                        second["causal_replayed"] == report["causal_links"]
                        and second["governed_new"] == 0
@@ -166,6 +176,20 @@ def main() -> int:
         bad_res = verification.check_object(store, bad, repo_path=repo)
         checks.append(("хибне джерело ескалує",
                        any("session_source_unavailable" in r for r in bad_res[1])))
+
+        # Реверс: підміна причини відкидання не проходить перевірку.
+        bad_u = json.loads(json.dumps(_object(store, objects[1])))
+        bad_u["semantic"]["unresolved_digest"] = "00" * 32
+        bad_u_res = verification.check_object(store, bad_u, repo_path=repo)
+        checks.append(("підміна причини відкидання ескалує",
+                       any("unresolved_reasons_mismatch" in r for r in bad_u_res[1])))
+
+        # Реверс: підміна digest дескрипторів не проходить перевірку.
+        bad_z = json.loads(json.dumps(_object(store, objects[2])))
+        bad_z["semantic"]["digest"] = "00" * 32
+        bad_z_res = verification.check_object(store, bad_z, repo_path=repo)
+        checks.append(("підміна дескрипторів зони ескалує",
+                       any("zone_descriptors_mismatch" in r for r in bad_z_res[1])))
 
         for label, ok in checks:
             print(f"  {'ok  ' if ok else 'FAIL'} {label}")

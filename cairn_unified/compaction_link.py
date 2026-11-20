@@ -29,12 +29,27 @@ import hashlib
 from pathlib import Path
 
 from . import nodes, semantic
-from .canon import sha256_text
+from .canon import canonical, sha256_text
 from .code import git
 
 #: Repository-relative prefix normalization. Tool paths are absolute
 #: Windows paths; node paths in `code_symbols` are repo-relative POSIX.
 _SEP = "\\"
+
+
+def path_variants(path: str, repo_path: str | Path) -> list[str]:
+    """Історичний шлях + його канонічний варіант після переносу в корінь.
+
+    Коміти й події зберегли `src/cairn_unified/...`, але пакет тепер лежить
+    у корені. Варіант додається лише тоді, коли файл справді існує, — не
+    за припущенням. Це дає змогу резолвити той самий вузол на обох машинах.
+    """
+    out = [str(path)]
+    if str(path).startswith("src/cairn_unified/"):
+        moved = str(path)[len("src/"):]
+        if (Path(repo_path) / moved).is_file():
+            out.append(moved)
+    return out
 
 
 def normalize_path(path: str, repo_path: str | Path | tuple) -> str | None:
@@ -50,7 +65,17 @@ def normalize_path(path: str, repo_path: str | Path | tuple) -> str | None:
     for root in roots:
         prefix = str(root).replace("/", _SEP).rstrip(_SEP) + _SEP
         if raw.lower().startswith(prefix.lower()):
-            return raw[len(prefix):].replace(_SEP, "/")
+            rel = raw[len(prefix):].replace(_SEP, "/")
+            # Після переносу пакета з src/ у корінь історичні події все ще
+            # несуть старий префікс. Перевіряємо файл у ВСІХ коренях, а не
+            # лише в корені події: мутація сталася в приватному checkoutі зі
+            # старою розкладкою, а індекс вузлів будується за новою (публічною).
+            # Виміряно: інакше 11025 випадав з індексу й намір 10987 губився.
+            if rel.startswith("src/cairn_unified/"):
+                moved = rel[len("src/"):]
+                if any((Path(r) / moved).is_file() for r in roots):
+                    rel = moved
+            return rel
     return None
 
 
@@ -74,6 +99,43 @@ def _prior_intent(ev: dict, intents: list[dict], seqs: list[int]) -> dict | None
     """
     i = bisect.bisect_right(seqs, int(ev.get("seq") or 0)) - 1
     return intents[i] if i >= 0 else None
+
+
+def mutation_readiness(store, events: list[dict], repo_id: str,
+                       repo_path: str | Path | tuple) -> tuple[list[tuple], list[dict]]:
+    """Єдиний класифікатор мутацій: готові до ребра й відкинуті з причиною.
+
+    Використовується і при побудові ребер, і верифікатором. Інакше «чому
+    відкинуто» обчислювалося б двома різними шляхами й розійшлося б.
+    """
+    ready: list[tuple] = []
+    unresolved: list[dict] = []
+    for ev in events:
+        if ev.get("kind") != "mutation":
+            continue
+        if str(ev.get("status")) != "completed":
+            unresolved.append({"event_id": ev.get("event_id"),
+                               "reason": "mutation_not_completed"})
+            continue
+        rel = normalize_path(ev.get("path") or "", repo_path)
+        if not rel:
+            unresolved.append({"event_id": ev.get("event_id"),
+                               "reason": "path_outside_repo", "path": ev.get("path")})
+            continue
+        resolved = nodes.resolve(store, repo_id, rel)
+        if not resolved:
+            unresolved.append({"event_id": ev.get("event_id"),
+                               "reason": "node_not_indexed", "path": rel})
+            continue
+        ready.append((ev, rel, resolved))
+    return ready, unresolved
+
+
+def unresolved_digest(unresolved: list[dict]) -> str:
+    """Стабільний відтисок відкинутого: (event_id, причина, шлях)."""
+    rows = sorted((str(u.get("event_id") or ""), str(u.get("reason") or ""),
+                   str(u.get("path") or "")) for u in unresolved)
+    return sha256_text(canonical(rows))
 
 
 def session_object(store, *, session_id: str, compaction: dict,
@@ -125,25 +187,10 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
 
     links: list[dict] = []
     replayed = 0
-    unresolved: list[dict] = []
     seen: set[tuple[str, str]] = set()
+    ready, unresolved = mutation_readiness(store, events, repo_id, repo_path)
 
-    for ev in events:
-        if ev.get("kind") != "mutation":
-            continue
-        if str(ev.get("status")) != "completed":
-            unresolved.append({"event_id": ev.get("event_id"), "reason": "mutation_not_completed"})
-            continue
-        rel = normalize_path(ev.get("path") or "", repo_path)
-        if not rel:
-            unresolved.append({"event_id": ev.get("event_id"), "reason": "path_outside_repo",
-                               "path": ev.get("path")})
-            continue
-        resolved = nodes.resolve(store, repo_id, rel)
-        if not resolved:
-            unresolved.append({"event_id": ev.get("event_id"), "reason": "node_not_indexed",
-                               "path": rel})
-            continue
+    for ev, rel, resolved in ready:
         rationale = reasons_by_event.get(str(ev["event_id"]), "")
         intent = _prior_intent(ev, intents, intent_seqs)
         before = ev.get("old_string") or ""
@@ -189,6 +236,55 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
             "unresolved": unresolved}
 
 
+def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
+                      commit: str, repo_id: str, repo_roots: list[str],
+                      scope: list[str], opencode_db: str, actor: dict) -> dict:
+    """«Чому відкинуто» — окремий перевірений об'єкт, не тихий лог.
+
+    Причини рахуються з того самого класифікатора, що й ребра; верифікатор
+    перераховує їх із реальної БД і звіряє digest. Об'єкт не може свідчити
+    сам за себе.
+    """
+    counts: dict[str, int] = {}
+    examples: dict[str, list[str]] = {}
+    for item in unresolved:
+        reason = str(item.get("reason") or "unknown")
+        counts[reason] = counts.get(reason, 0) + 1
+        if len(examples.setdefault(reason, [])) < 3:
+            examples[reason].append(str(item.get("path") or item.get("event_id") or ""))
+    lines = [
+        "Відкинуті мутації сесії (не є ребрами й не є причинами).",
+        f"Коміт: {commit[:12]}",
+        f"Сесія: {str(session_obj['semantic'].get('session_id') or '')}",
+        "Кожна причина — результат перевірки статусу/шляху/індексації вузла.",
+        "Повний перелік (event_id, причина, шлях) у semantic.unresolved_rows.",
+        "",
+    ]
+    for reason in sorted(counts):
+        lines.append(f"[{reason}] {counts[reason]}: " + ", ".join(examples[reason]))
+    text = "\n".join(lines) + "\n"
+    stable = _digest(f"unresolved:v1:{commit}:{unresolved_digest(unresolved)}")
+    return semantic.put_object(
+        store, object_type="observation",
+        title=f"unresolved mutations {commit[:7]}",
+        summary=text, actor=actor, lifecycle="proposed", trust="agent_proposed",
+        stable_key=stable, idempotency_key=f"unresolved-obj:{stable}",
+        semantic={
+            "kind": "unresolved_mutations", "commit": commit, "repo_id": repo_id,
+            "session_id": str(session_obj["semantic"].get("session_id") or ""),
+            "session_obj_id": str(session_obj["id"]),
+            "opencode_db": opencode_db, "repo_roots": list(repo_roots),
+            "unresolved_count": len(unresolved),
+            "unresolved_by_reason": counts,
+            "unresolved_digest": unresolved_digest(unresolved),
+            "unresolved_rows": sorted(
+                (str(u.get("event_id") or ""), str(u.get("reason") or ""),
+                 str(u.get("path") or "")) for u in unresolved),
+        },
+        scope=scope,
+    )["object"]
+
+
 def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
                 work_id: str, actor: dict) -> dict:
     """CrUD коміту -> `commit_fact` і `mutated`; коміт не є причиною сесії.
@@ -212,11 +308,17 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
     unresolved = []
     scope: set[str] = set()
     for status_code, path in changed:
-        resolved = nodes.resolve(store, repo_id, path)
-        if not resolved:
+        # Після переносу пакета в корінь старий шлях коміту не резолвиться.
+        # Резолвимо обидва варіанти й дедупликуємо за stable_key, інакше
+        # той самий вузол дав би два `mutated`-ребра з різними адресами.
+        grouped: dict[str, dict] = {}
+        for variant in path_variants(path, repo_path):
+            for node in nodes.resolve(store, repo_id, variant):
+                grouped[str(node["stable_key"])] = node
+        if not grouped:
             unresolved.append({"path": path, "reason": "node_not_indexed"})
             continue
-        for node in resolved:
+        for node in grouped.values():
             found.append((status_code, path, node))
             scope.add(str(node["address"]))
             scope.add(str(node["stable_key"]))

@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from cairn_unified import code, context, handoff, ledger, semantic, workflow, work  # noqa: E402
 from cairn_unified.errors import CairnError  # noqa: E402

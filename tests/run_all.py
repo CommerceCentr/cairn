@@ -20,10 +20,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 SCRIPTS = (
-    "test_budget.py",
-    "test_merge.py",
-    "test_redact.py",
-    "test_repo_scope.py",
+    "test_unified_session_context.py",
+    "test_unified_commit_facts.py",
+    "test_unified_v2_root.py",
+    "verify_zones.py",
+    "verify_merge.py",
     "test_unified_vs01.py",
     "test_unified_federation.py",
     "test_unified_mcp.py",
@@ -39,7 +40,7 @@ def env() -> dict[str, str]:
     result = dict(os.environ)
     result["PYTHONDONTWRITEBYTECODE"] = "1"
     result["PYTHONIOENCODING"] = "utf-8"
-    result["PYTHONPATH"] = str(ROOT / "src")
+    result["PYTHONPATH"] = str(ROOT)
     return result
 
 
@@ -61,7 +62,8 @@ def run(script: str) -> bool:
 
 def import_smoke() -> bool:
     code = (
-        "import cairn_unified, cairn_unified.cli, cairn_unified.mcp, "
+        "import cairn_unified, cairn_unified.cli, cairn_unified.mcp, cairn_unified.commits, "
+        "cairn_unified.zones, "
         "cairn_unified.handoff, cairn_unified.gates, cairn_unified.workflow, "
         "cairn_unified.federation; print(cairn_unified.__version__)"
     )

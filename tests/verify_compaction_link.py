@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from adapters import opencode  # noqa: E402
 from cairn_unified import code, compaction_link, nodes, verification  # noqa: E402
@@ -38,8 +38,8 @@ WORK = Path(r"Q:\prj\cairn-private")   # тут відбувались мута�
 ROOTS = (REPO, WORK)
 ACTOR = {"kind": "system", "id": "compaction-link-test"}
 DB = opencode.default_db()
-CI_FILE = "src/cairn_unified/ci_gate.py"
-LINK_FILE = "src/cairn_unified/compaction_link.py"
+CI_FILE = "cairn_unified/ci_gate.py"
+LINK_FILE = "cairn_unified/compaction_link.py"
 INTENT_10564 = 'давай знайдемо, де ховається "чому"'
 INTENT_10987 = 'між моїм теперішнім повідомленням і попереднім'
 
@@ -59,10 +59,10 @@ def _repo_and_index(store):
                                           ident, ACTOR, f"repo:{ident['id']}"))
     # Індексуємо тільки ті шляхи, що реально є в репо; це дає стабільний набір
     # вузлів для звірки напрямку ребра.
-    paths = [CI_FILE, "src/cairn_unified/context.py",
-             "src/cairn_unified/cli.py", "tests/run_all.py",
-             LINK_FILE, "src/cairn_unified/verification.py",
-             "adapters/opencode.py", "src/cairn_unified/ontology.py",
+    paths = [CI_FILE, "cairn_unified/context.py",
+             "cairn_unified/cli.py", "tests/run_all.py",
+             LINK_FILE, "cairn_unified/verification.py",
+             "adapters/opencode.py", "cairn_unified/ontology.py",
              "tests/verify_compaction_link.py"]
     present = [p for p in paths if (REPO / p).is_file()]
     nodes.index(store, ident["id"], ACTOR, paths=present)

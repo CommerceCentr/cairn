@@ -8,7 +8,9 @@
    тих самих подій, який НЕ є компактацією opencode.db.
 3. ``commit_fact --mutated--> node`` — окремий CrUD-факт із ``git show``;
    коміт пізніший за мутацію й причиною не є.
-4. контекст задачі, де всі три об'єкти відомі як ``governed_by``.
+4. ``unresolved_mutations`` і ``zone_descriptors`` — окремі факти, а не тихий
+   лог; разом із сесією, комітом і автокомактацією вони входять у контекст
+   як ``governed_by`` (не в HISTORY-timeline).
 
 Автор тексту — агент/система, тому об'єкти створюються як ``agent_proposed``.
 ``verify_object`` може підвищити їх до ``verified_system`` лише повторним
@@ -60,9 +62,12 @@ def _anchor(events: list[dict], commit_ms: int) -> tuple[dict | None, bool]:
 def link(store, *, repo_path: str | Path, session_id: str, commit: str,
          work_id: str, actor: dict, opencode_db: str,
          repo_roots: tuple[str | Path, ...] = (),
-         auto_verify: bool = True, build_context: bool = True) -> dict:
+         auto_verify: bool = True, build_context: bool = True,
+         budget_chars: int | None = None,
+         zone_specs: tuple[tuple[str, str, str], ...] | None = None) -> dict:
     """Зв'язати сесію, мутації, коміт і контекст.Ідемпотентно за ключами ребер."""
     from adapters import opencode  # локальний імпорт: без нього ядро чисте
+    from . import zones as zone_mod
 
     full = _git(repo_path, "rev-parse", f"{commit}^{{commit}}")
     commit_ms = int(_git(repo_path, "show", "-s", "--format=%ct", full)) * 1000
@@ -73,7 +78,11 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
         con, "repository.upserted", ident["id"], ident, actor, f"repo:{ident['id']}"))
     repo_id = ident["id"]
 
-    present = [p for _st, p in changed if (Path(repo_path) / p).is_file()]
+    present: list[str] = []
+    for _st, p in changed:
+        for variant in compaction_link.path_variants(p, repo_path):
+            if (Path(repo_path) / variant).is_file() and variant not in present:
+                present.append(variant)
     indexed = nodes.index(store, repo_id, actor, paths=present)
     resolved: dict[str, list[dict]] = {p: nodes.resolve(store, repo_id, p) for p in present}
     addresses = sorted({n["address"] for group in resolved.values() for n in group})
@@ -94,6 +103,10 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
     mutations = compaction_link.link_mutations(
         store, events=events, session_obj_id=session_obj["id"], repo_id=repo_id,
         repo_path=roots, actor=actor)
+    rejected = compaction_link.unresolved_object(
+        store, unresolved=mutations["unresolved"], session_obj=session_obj,
+        commit=full, repo_id=repo_id, repo_roots=[str(r) for r in roots],
+        scope=scope, opencode_db=opencode_db, actor=actor)
     commit_link = compaction_link.link_commit(
         store, repo_id=repo_id, repo_path=repo_path, commit=full,
         work_id=work_id, actor=actor)
@@ -101,7 +114,29 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
         store, events=events, links=mutations["links"], session_obj=session_obj,
         opencode_db=opencode_db, actor=actor, commit=full)
 
-    objects = [session_obj["id"]]
+    specs = zone_specs or (("cairn", str(repo_path), "*.py"),)
+    refs = zone_mod.object_refs(
+        store, [session_obj["id"], str(rejected["id"]),
+                str(auto["object"]["id"])]
+        + ([str(commit_link["fact_id"])] if commit_link.get("fact_id") else []))
+    sem = session_obj.get("semantic") or {}
+    identity = {
+        "session_id": str(sem.get("session_id") or session_id),
+        "compaction_message_id": str(sem.get("compaction_message_id") or ""),
+        "summary_sha256": str(sem.get("summary_sha256") or ""),
+        "keep_id": str(sem.get("keep_id") or ""),
+    }
+    zone_names: list[str] = []
+    for name, _repo, spec in specs:
+        # Portability: дескриптор несе стабільну ідентичність репозиторію
+        # й відносні посилання на сесію/summary, а не абсолютний шлях машини.
+        zone_mod.descriptor(store, name, repo=repo_id, pathspec=spec, actor=actor,
+                            context_refs=refs, context_identity=identity)
+        zone_names.append(name)
+    zone_obj, zone_rows = zone_mod.context_object(
+        store, zones=zone_names, actor=actor, commit=full, scope=scope)
+
+    objects = [session_obj["id"], str(rejected["id"]), str(zone_obj["id"])]
     if commit_link.get("fact_id"):
         objects.append(commit_link["fact_id"])
     objects.append(str(auto["object"]["id"]))
@@ -123,6 +158,7 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
                 store, oid, repo_path=repo_path)
 
     package = context.build(store, work_id, purpose="understand",
+                            budget_chars=budget_chars,
                             use_cache=False) if build_context else None
     included = {str(item.get("object_id") or "")
                 for item in (package or {}).get("items") or []}
@@ -135,6 +171,10 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
         "repo_id": repo_id, "indexed_paths": present, "index_digest": indexed.get("index_digest"),
         "causal_links": mutations["new"], "causal_replayed": mutations["replayed"],
         "causal_unresolved": mutations["unresolved"],
+        "unresolved_count": len(mutations["unresolved"]),
+        "unresolved_by_reason": rejected["semantic"]["unresolved_by_reason"],
+        "unresolved_object_id": str(rejected["id"]),
+        "zone_descriptors": zone_rows, "zone_object_id": str(zone_obj["id"]),
         "history_mutated": commit_link["mutated"], "history_unresolved": commit_link["unresolved"],
         "auto_compaction_intents": auto["intents"], "auto_compaction_text": auto["text"],
         "objects": objects, "governed_new": governed, "verified": verified,
