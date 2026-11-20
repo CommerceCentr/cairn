@@ -1,0 +1,145 @@
+"""Причинний контекст + git history в одному відтворюваному проході.
+
+Один виклик ``link()`` будує чотири речі й не підміняє одну іншою:
+
+1. ``node --caused_by--> session`` — участь у часі/шляху, підтверджена
+   mutation-подією; корінь «чому» — слова користувача (`user_intent`).
+2. ``auto_compaction --derived_from--> session`` — детермінований зріз
+   тих самих подій, який НЕ є компактацією opencode.db.
+3. ``commit_fact --mutated--> node`` — окремий CrUD-факт із ``git show``;
+   коміт пізніший за мутацію й причиною не є.
+4. контекст задачі, де всі три об'єкти відомі як ``governed_by``.
+
+Автор тексту — агент/система, тому об'єкти створюються як ``agent_proposed``.
+``verify_object`` може підвищити їх до ``verified_system`` лише повторним
+читанням реальних джерел (opencode.db у mode=ro + git rev-parse), ніколи
+не звіряючи об'єкт самого з собою. Нерезолвоване лишається в звіті.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from . import code, compaction_link, context, nodes, semantic, verification
+from .canon import sha256_text
+
+GENESIS = "causal_history/1.0"
+
+
+def _git(repo: str | Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args],
+                          check=True, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout.strip()
+
+
+def _changed(repo: str | Path, commit: str) -> list[tuple[str, str]]:
+    out = _git(repo, "show", "--name-status", "--format=", commit)
+    result = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0][:1] in {"A", "M", "D", "R"}:
+            result.append((parts[0][:1], parts[-1]))
+    return result
+
+
+def _anchor(events: list[dict], commit_ms: int) -> tuple[dict | None, bool]:
+    """Остання компактація перед комітом; булева — чи вона справді передує.
+
+    Якщо компактацій до коміту немає, беремо останню наявну, але позначаємо
+    ``before_commit=False`` — це не вигадуємо передування, якого не було.
+    """
+    comps = sorted((e for e in events if e.get("kind") == "compaction"),
+                   key=lambda e: (int(e.get("ts") or 0), int(e.get("seq") or 0)))
+    prior = [e for e in comps if int(e.get("ts") or 0) <= commit_ms]
+    if prior:
+        return prior[-1], True
+    return (comps[-1], False) if comps else (None, False)
+
+
+def link(store, *, repo_path: str | Path, session_id: str, commit: str,
+         work_id: str, actor: dict, opencode_db: str,
+         repo_roots: tuple[str | Path, ...] = (),
+         auto_verify: bool = True, build_context: bool = True) -> dict:
+    """Зв'язати сесію, мутації, коміт і контекст.Ідемпотентно за ключами ребер."""
+    from adapters import opencode  # локальний імпорт: без нього ядро чисте
+
+    full = _git(repo_path, "rev-parse", f"{commit}^{{commit}}")
+    commit_ms = int(_git(repo_path, "show", "-s", "--format=%ct", full)) * 1000
+    changed = _changed(repo_path, full)
+
+    ident = code.git.identity(str(repo_path))
+    store.mutate(lambda con: store.append(
+        con, "repository.upserted", ident["id"], ident, actor, f"repo:{ident['id']}"))
+    repo_id = ident["id"]
+
+    present = [p for _st, p in changed if (Path(repo_path) / p).is_file()]
+    indexed = nodes.index(store, repo_id, actor, paths=present)
+    resolved: dict[str, list[dict]] = {p: nodes.resolve(store, repo_id, p) for p in present}
+    addresses = sorted({n["address"] for group in resolved.values() for n in group})
+    stable_keys = sorted({str(n["stable_key"]) for group in resolved.values()
+                          for n in group})
+    scope = sorted(set(addresses) | set(stable_keys))
+
+    events = list(opencode.read(opencode_db, session_id))
+    anchor, anchor_before = _anchor(events, commit_ms)
+    if anchor is None:
+        return {"ok": False, "reason": "no_compaction_in_session",
+                "session_id": session_id, "commit": full}
+
+    session_obj = compaction_link.session_object(
+        store, session_id=session_id, compaction=anchor, repo_id=repo_id,
+        actor=actor, commit=full, opencode_db=opencode_db, scope=scope)
+    roots = (Path(repo_path), *[Path(r) for r in repo_roots])
+    mutations = compaction_link.link_mutations(
+        store, events=events, session_obj_id=session_obj["id"], repo_id=repo_id,
+        repo_path=roots, actor=actor)
+    commit_link = compaction_link.link_commit(
+        store, repo_id=repo_id, repo_path=repo_path, commit=full,
+        work_id=work_id, actor=actor)
+    auto = compaction_link.auto_compaction(
+        store, events=events, links=mutations["links"], session_obj=session_obj,
+        opencode_db=opencode_db, actor=actor, commit=full)
+
+    objects = [session_obj["id"]]
+    if commit_link.get("fact_id"):
+        objects.append(commit_link["fact_id"])
+    objects.append(str(auto["object"]["id"]))
+    governed = 0
+    for oid in objects:
+        result = semantic.relate(
+            store, from_id=work_id, to_id=oid, relation="governed_by", actor=actor,
+            idempotency_key=f"causal-governed:{GENESIS}:{work_id}:{oid}")
+        governed += 0 if result.get("replayed") else 1
+    for key in stable_keys:
+        semantic.relate(
+            store, from_id=work_id, to_id=key, relation="targets_symbol", actor=actor,
+            idempotency_key=f"causal-target:{GENESIS}:{work_id}:{key}")
+
+    verified: dict[str, dict] = {}
+    if auto_verify:
+        for oid in objects:
+            verified[oid] = verification.verify_object(
+                store, oid, repo_path=repo_path)
+
+    package = context.build(store, work_id, purpose="understand",
+                            use_cache=False) if build_context else None
+    included = {str(item.get("object_id") or "")
+                for item in (package or {}).get("items") or []}
+    shown = [oid for oid in objects if oid in included]
+
+    return {
+        "ok": True, "generator": GENESIS, "commit": full, "commit_head": ident["head"],
+        "session_id": session_id, "anchor_seq": anchor.get("seq"),
+        "anchor_message_id": anchor.get("message_id"), "anchor_before_commit": anchor_before,
+        "repo_id": repo_id, "indexed_paths": present, "index_digest": indexed.get("index_digest"),
+        "causal_links": mutations["new"], "causal_replayed": mutations["replayed"],
+        "causal_unresolved": mutations["unresolved"],
+        "history_mutated": commit_link["mutated"], "history_unresolved": commit_link["unresolved"],
+        "auto_compaction_intents": auto["intents"], "auto_compaction_text": auto["text"],
+        "objects": objects, "governed_new": governed, "verified": verified,
+        "context_id": (package or {}).get("context_id"),
+        "context_digest": (package or {}).get("integrity_digest"),
+        "context_shown": shown,
+        "summary_sha256": sha256_text("|".join(objects) + full),
+    }

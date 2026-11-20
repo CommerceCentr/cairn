@@ -194,6 +194,11 @@ def main() -> int:
                        ac["object"]["semantic"]["kind"] == "auto_compaction"))
         checks.append(("digest тексту збігається",
                        sha256_text(ac_text) == ac["object"]["semantic"]["summary_sha256"]))
+        checks.append(("ланцюг обмежений, пропуск позначений",
+                       len(ac_text) < 100000
+                       and "мутацій; повний перелік event_ids" in ac_text
+                       and ac["object"]["semantic"]["chain_total"]
+                       > ac["object"]["semantic"]["chain_shown"]))
         ac_rels = [r for r in _rels(store)
                    if r["relation_type"] == "derived_from"
                    and r["from_id"] == ac["object"]["id"]

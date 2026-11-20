@@ -30,6 +30,7 @@ SCRIPTS = (
     "test_unified_hardening.py",
     "verify_was_rationale.py",
     "verify_auto_gate.py",
+    "verify_causal_history.py",
     "benchmark_unified.py",
 )
 

@@ -78,12 +78,14 @@ def _prior_intent(ev: dict, intents: list[dict], seqs: list[int]) -> dict | None
 
 def session_object(store, *, session_id: str, compaction: dict,
                    repo_id: str, actor: dict, commit: str = "",
-                   opencode_db: str = "") -> dict:
+                   opencode_db: str = "", scope: list[str] | None = None) -> dict:
     """Створити/отримати session-об'єкт для однієї компактації.
 
     Тотожність — реальний рядок компактації (`message_id`), НЕ SHA коміту.
     `session_id` береться з БД, а не виводиться з diff. `opencode_db` — шлях
-    до того самого рядка, який верифікатор перечитає у mode=ro.
+    до того самого рядка, який верифікатор перечитає у mode=ro. `scope` —
+    адреси вузлів, знайдені з мутацій; без них контекст не покаже сесію
+    в історії цього вузла.
     """
     summary = compaction.get("summary") or ""
     key = f"ses:{session_id}:cmp:{compaction.get('message_id') or compaction.get('event_id')}"
@@ -95,7 +97,8 @@ def session_object(store, *, session_id: str, compaction: dict,
         stable_key=stable,
         idempotency_key=f"session-cmp:{stable}",
         semantic={
-            "kind": "session", "session_id": session_id,
+            "kind": "session", "session_source": "opencode_db",
+            "session_id": session_id,
             "compaction_message_id": compaction.get("message_id") or "",
             "compaction_seq": compaction.get("seq"),
             "keep_id": compaction.get("keep_id") or "",
@@ -104,7 +107,7 @@ def session_object(store, *, session_id: str, compaction: dict,
             "commit": commit,
             "opencode_db": opencode_db,
         },
-        scope=[],
+        scope=list(scope or []),
     )["object"]
 
 
@@ -179,6 +182,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
                 replayed += 1
             else:
                 links.append({"event_id": ev["event_id"], "address": node["address"],
+                              "stable_key": str(node["stable_key"]),
                               "path": rel, "rationale_chars": len(rationale),
                               "intent_seq": evidence["intent_seq"]})
     return {"links": links, "new": len(links), "replayed": replayed,
@@ -204,6 +208,18 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
         parts = line.split("\t")
         if len(parts) >= 2 and parts[0][:1] in {"A", "M", "D", "R"}:
             changed.append((parts[0][:1], parts[-1]))
+    found: list[tuple[str, str, dict]] = []
+    unresolved = []
+    scope: set[str] = set()
+    for status_code, path in changed:
+        resolved = nodes.resolve(store, repo_id, path)
+        if not resolved:
+            unresolved.append({"path": path, "reason": "node_not_indexed"})
+            continue
+        for node in resolved:
+            found.append((status_code, path, node))
+            scope.add(str(node["address"]))
+            scope.add(str(node["stable_key"]))
     fact = semantic.put_object(
         store, object_type="fact",
         title=f"commit {full[:7]}",
@@ -212,31 +228,26 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
         stable_key=_digest(f"commit:{repo_id}:{full}"),
         idempotency_key=f"commit-fact-obj:{full}",
         semantic={"kind": "commit_fact", "commit": full, "basis": "git_diff"},
-        scope=[],
+        scope=sorted(scope),
     )["object"]
     mutated = []
-    unresolved = []
-    for status_code, path in changed:
-        resolved = nodes.resolve(store, repo_id, path)
-        if not resolved:
-            unresolved.append({"path": path, "reason": "node_not_indexed"})
-            continue
-        for node in resolved:
-            result = semantic.relate(
-                store, from_id=fact["id"], to_id=str(node["stable_key"]),
-                relation="mutated", actor=actor,
-                condition={"basis": "git_diff", "status": status_code, "commit": full},
-                idempotency_key=f"mutated:{full}:{node['stable_key']}",
-            )
-            if not result.get("replayed"):
-                mutated.append({"path": path, "address": node["address"],
-                                "status": status_code})
+    for status_code, path, node in found:
+        result = semantic.relate(
+            store, from_id=fact["id"], to_id=str(node["stable_key"]),
+            relation="mutated", actor=actor,
+            condition={"basis": "git_diff", "status": status_code, "commit": full},
+            idempotency_key=f"mutated:{full}:{node['stable_key']}",
+        )
+        if not result.get("replayed"):
+            mutated.append({"path": path, "address": node["address"],
+                            "status": status_code})
     return {"resolved": full, "fact_id": fact["id"], "mutated": mutated,
             "unresolved": unresolved}
 
 
 def auto_compaction(store, *, events: list[dict], links: list[dict],
-                    session_obj: dict, opencode_db: str, actor: dict) -> dict:
+                    session_obj: dict, opencode_db: str, actor: dict,
+                    commit: str = "") -> dict:
     """Детермінована автокомактація: «чому» дослівно з реальних подій сесії.
 
     НЕ є компактацією opencode.db і не видає себе за неї: окремий
@@ -256,10 +267,18 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
     ordered = sorted(links, key=lambda l: (
         int(muts.get(str(l["event_id"]), {}).get("seq") or 0),
         str(l["event_id"]), str(l["address"])))
+    # Текст мусить лишатися обмеженим: 482 ребра з повним наміром у кожному
+    # дали 620 KB й не влізли б у жоден контекст. Усі наміри лишаються
+    # дослівно один раз у шапці, усі event_ids — у semantic, а тут лише
+    # перші ребра ланцюга + явна позначка пропуску.
+    MAX_CHAIN = 12
+    shown_chain = ordered[:MAX_CHAIN]
 
     intent_refs: list[dict] = []
     seen: set[str] = set()
     chain: list[str] = []
+    # Наміри збираємо з УСІХ ребер: інакше обмеження ланцюга викинуло б
+    # пізні наміри, яких немає серед перших 12 мутацій (виміряно: 10564/10987).
     for link in ordered:
         ev = muts.get(str(link["event_id"]), {})
         prior = _prior_intent(ev, intents, seqs)
@@ -269,6 +288,9 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
                 "message_id": str(prior["message_id"]), "seq": prior["seq"],
                 "text_sha256": sha256_text(str(prior.get("text") or "")),
             })
+    for link in shown_chain:
+        ev = muts.get(str(link["event_id"]), {})
+        prior = _prior_intent(ev, intents, seqs)
         reason = reasons.get(str(link["event_id"]), "")
         chain.extend([
             f"[{link['event_id']}]",
@@ -279,7 +301,7 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
         ])
 
     header = [
-        "Автокомактація причини (generated: compaction_link/auto_compaction/1.0)",
+        "Автокомактація причини (generated: compaction_link/auto_compaction/1.1)",
         "НЕ є компактацією opencode.db; джерело — реальні події сесії (mode=ro).",
         f"Сесія: {session_id}",
         f"Компактація-якір: {cmp_msg}",
@@ -293,9 +315,12 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
         prior = by_id[ref["message_id"]]
         header.append(f"[seq {ref['seq']}, {ref['message_id']}] {prior['text']}")
     header += ["", "ЛАНЦЮГ НАМІР -> МОТИВ -> МУТАЦІЯ -> ВУЗОЛ:"]
+    if len(ordered) > len(shown_chain):
+        chain.append(f"... +{len(ordered) - len(shown_chain)} мутацій; "
+                     "повний перелік event_ids у semantic.mutation_event_ids")
     text = "\n".join(header + chain) + "\n"
 
-    stable = _digest(f"auto-cmp:{session_id}:{cmp_msg or session_obj['id']}")
+    stable = _digest(f"auto-cmp:v1.1:{session_id}:{cmp_msg or session_obj['id']}")
     obj = semantic.put_object(
         store, object_type="decision",
         title=f"автокомактація чому {session_id}",
@@ -304,14 +329,18 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
         semantic={
             "kind": "auto_compaction", "session_id": session_id,
             "session_obj_id": str(session_obj["id"]),
+            "commit": commit,
             "compaction_message_id": cmp_msg,
-            "basis": "opencode_events", "generator": "compaction_link/auto_compaction/1.0",
+            "basis": "opencode_events", "generator": "compaction_link/auto_compaction/1.1",
+            "chain_shown": len(shown_chain), "chain_total": len(ordered),
             "summary_sha256": sha256_text(text), "opencode_db": opencode_db,
             "intent_refs": intent_refs,
             "mutation_event_ids": [str(l["event_id"]) for l in ordered],
             "linked_nodes": len(ordered),
         },
-        scope=sorted({str(l["address"]) for l in ordered}),
+        scope=sorted({str(l["address"]) for l in ordered}
+                     | {str(l.get("stable_key") or "") for l in ordered
+                        if l.get("stable_key")}),
     )["object"]
     relation = semantic.relate(
         store, from_id=str(obj["id"]), to_id=str(session_obj["id"]),
