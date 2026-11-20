@@ -177,6 +177,37 @@ def accept_object(store, *, object_id: str, actor: dict, rationale: str | None =
     return store.mutate(op)
 
 
+def accept_batch(store, *, work_id: str, commit: str, actor: dict,
+                 rationale: str | None = None) -> dict:
+    """Одна дія людини приймає всі пропозиції коміту, пов'язані з цією задачею.
+
+    Кожен об'єкт і далі отримує власну подію authority через `accept_object` —
+    батчиться лише кількість CLI-викликів, не ланцюг довіри.
+    """
+    require_human(actor)
+    rows = store.read(
+        "SELECT o.id, o.payload_json FROM objects o "
+        "JOIN relations r ON r.to_id = o.id AND r.relation_type = 'governed_by' "
+        "WHERE r.from_id = ? ORDER BY o.id", (work_id,),
+    )
+    accepted: list[str] = []
+    replayed: list[str] = []
+    for row in rows:
+        body = json.loads(row["payload_json"])
+        sem = body.get("semantic") or {}
+        current = str(sem.get("commit") or "")
+        if not current or not (current.startswith(commit) or commit.startswith(current[:7])):
+            continue
+        if body.get("trust_class") in AUTHORITATIVE:
+            replayed.append(row["id"])
+            continue
+        result = accept_object(store, object_id=row["id"], actor=actor,
+                               rationale=rationale or f"batch accept {commit}")
+        (replayed if result.get("replayed") else accepted).append(row["id"])
+    return {"work_id": work_id, "commit": commit, "accepted": accepted,
+            "replayed": replayed, "count": len(accepted)}
+
+
 def supersede(store, *, object_id: str, summary: str, actor: dict, title: str | None = None) -> dict:
     require_human(actor)
     current = _object(store, object_id)

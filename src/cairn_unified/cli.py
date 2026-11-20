@@ -58,6 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     g, c = group("code")
     ci = c.add_parser("index"); ci.add_argument("repo_id")
+    cn = c.add_parser("nodes"); cn.add_argument("repo_id")
+    cn.add_argument("--paths", default=None, help="шляхи через кому; за замовчуванням усі текстові")
+
+    g, c = group("node")
+    nr = c.add_parser("resolve"); nr.add_argument("repo_id"); nr.add_argument("path")
+    nr.add_argument("--line", type=int); nr.add_argument("--address")
+    np_ = c.add_parser("prepare")
+    np_.add_argument("repo_id"); np_.add_argument("work_id"); np_.add_argument("path")
+    np_.add_argument("--line", type=int); np_.add_argument("--address")
+    np_.add_argument("--packs", default=None); np_.add_argument("--follow", action="store_true")
 
     g, c = group("work")
     cc = c.add_parser("create")
@@ -93,7 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--summary", required=True)
     cp.add_argument("--constraints", default="[]")
     cp.add_argument("--scope", default="[]")
-    ca2 = c.add_parser("accept"); ca2.add_argument("object_id"); ca2.add_argument("--rationale")
+    ca2 = c.add_parser("accept"); ca2.add_argument("object_id", nargs="?")
+    ca2.add_argument("--rationale"); ca2.add_argument("--work"); ca2.add_argument("--commit")
     cs = c.add_parser("supersede"); cs.add_argument("object_id"); cs.add_argument("--summary", required=True)
     cv = c.add_parser("revoke"); cv.add_argument("object_id"); cv.add_argument("--reason", required=True)
     cq = c.add_parser("query"); cq.add_argument("--text"); cq.add_argument("--type")
@@ -111,6 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     g, c = group("evidence")
     ccm = c.add_parser("commit"); ccm.add_argument("repo_id"); ccm.add_argument("commit")
     ccm.add_argument("--subject")
+    ccf = c.add_parser("facts"); ccf.add_argument("repo_id"); ccf.add_argument("commit")
+    ccf.add_argument("--work", required=True); ccf.add_argument("--symbol", required=True)
     cte = c.add_parser("test"); cte.add_argument("--cwd", default=None); cte.add_argument("--subject")
     cte.add_argument("--repo-id"); cte.add_argument("--commit")
     cte.add_argument("command", nargs=argparse.REMAINDER)
@@ -200,7 +213,34 @@ def dispatch(args, actor: dict):
         return store.read("SELECT * FROM repositories")
 
     if group == "code":
+        if cmd == "nodes":
+            from . import nodes
+            paths = [p.strip() for p in args.paths.split(",") if p.strip()] if args.paths else None
+            return nodes.index(store, args.repo_id, actor, paths)
         return code.php.index(store, args.repo_id, actor)
+
+    if group == "node":
+        from . import history, nodes
+        repo = store.read_one("SELECT * FROM repositories WHERE id = ?", (args.repo_id,))
+        if repo is None:
+            raise CairnError("not_found", f"репозиторій {args.repo_id} не зареєстровано", exit_code=1)
+        found = nodes.resolve(store, args.repo_id, args.path, line=args.line,
+                              address=args.address)
+        if cmd == "resolve":
+            return {"repo_id": args.repo_id, "path": args.path, "nodes": found}
+        if not found:
+            return {"error": "node_not_found", "path": args.path,
+                    "hint": "спочатку `code nodes <repo_id>`", "nodes": []}
+        node = found[0]
+        result = history.scan(store, args.repo_id, args.work_id, node["stable_key"],
+                              args.path, actor, follow=args.follow)
+        result["node"] = node
+        if args.packs:
+            result["compactions"] = history.import_compactions(
+                store, args.repo_id, args.work_id, node["stable_key"], args.path, actor,
+                args.packs, start_line=node.get("start_line"), end_line=node.get("end_line"),
+            )
+        return result
 
     if group == "work":
         if cmd == "create":
@@ -245,7 +285,13 @@ def dispatch(args, actor: dict):
                 actor=actor, constraints=_json_arg(args.constraints), scope=_json_arg(args.scope),
             )
         if cmd == "accept":
-            return semantic.accept_object(store, object_id=args.object_id, actor=actor, rationale=args.rationale)
+            if args.object_id:
+                return semantic.accept_object(store, object_id=args.object_id,
+                                              actor=actor, rationale=args.rationale)
+            if not (args.work and args.commit):
+                raise CairnError("bad_input", "потрібен object_id або --work з --commit", exit_code=2)
+            return semantic.accept_batch(store, work_id=args.work, commit=args.commit,
+                                         actor=actor, rationale=args.rationale)
         if cmd == "supersede":
             return semantic.supersede(store, object_id=args.object_id, summary=args.summary, actor=actor)
         if cmd == "revoke":
@@ -269,6 +315,10 @@ def dispatch(args, actor: dict):
                                relation=args.relation, actor=actor)
 
     if group == "evidence":
+        if cmd == "facts":
+            from . import commits
+            return commits.ingest(store, args.repo_id, args.commit, work_id=args.work,
+                                  symbol=args.symbol, actor=actor)
         if cmd == "commit":
             return evidence.record_commit(store, args.repo_id, args.commit, actor, subject_id=args.subject)
         if cmd == "test":

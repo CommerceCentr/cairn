@@ -28,6 +28,8 @@ SCRIPTS = (
     "test_unified_federation.py",
     "test_unified_mcp.py",
     "test_unified_hardening.py",
+    "verify_was_rationale.py",
+    "verify_auto_gate.py",
     "benchmark_unified.py",
 )
 

@@ -184,6 +184,10 @@ for ($i = 0; $i < $count; $i++) {
     } else {
         $qualified = ($namespace ? $namespace . '\\' : '') . $short;
         $stable = 'symbol://' . $repoId . '/php/' . trim($qualified, '\\');
+        // Глобальні функції з однаковою назвою в різних файлах мали колізію
+        // id/stable_key, і проєкція зберігала лише одне визначення. Шлях файла
+        // робить ідентичність унікальною; методи класів лишаються без змін.
+        $stable .= '@' . ltrim($rel, '/');
         $kind = 'function';
     }
 
