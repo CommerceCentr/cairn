@@ -258,7 +258,11 @@ def main() -> int:
         checks.append(("верифікатор: реальне джерело пройшло",
                        any(c["check"] == "session_summary_matches" for c in good[0])))
         checks.append(("верифікатор: хибне джерело ескалує",
-                       "unresolved:session_source_unavailable" in bad[1]))
+                       # Контракт точніший: «джерела немає» (unresolved)
+                       # окремо від «перевірка впала» (verifier_error).
+                       "unresolved:session_source_missing" in bad[1]
+                       and not any(r.startswith("verifier_error")
+                                   for r in bad[1])))
 
         for label, ok in checks:
             print(f"  {'ok  ' if ok else 'FAIL'} {label}")

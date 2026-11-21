@@ -1,0 +1,110 @@
+{
+ "question": "коли і чому редагувався tests/run_all.py, з комітом 942cb52",
+ "target": {
+  "path": "tests/run_all.py",
+  "commit": "942cb5264107ae56b92aa16eb1f00cb34a71d83b",
+  "repo": "Q:/prj/cairn",
+  "store": "Q:/prj/cairn-private"
+ },
+ "native": {
+  "path": "native",
+  "question": "коли і чому редагувався tests/run_all.py, з комітом 942cb52",
+  "steps": [
+   {
+    "step": "ledger scan .cairn ~ run_all.py",
+    "chars": 2710390,
+    "bytes": 3080247,
+    "lines": 269,
+    "tokens_est": 677598,
+    "sha256": "1d49a1c302597c4b",
+    "ms": 20.4
+   },
+   {
+    "step": "git log -1 942cb52",
+    "chars": 427,
+    "bytes": 427,
+    "lines": 7,
+    "tokens_est": 107,
+    "sha256": "0323bdf38a06067e",
+    "ms": 21.8
+   },
+   {
+    "step": "git show --name-status 942cb52",
+    "chars": 513,
+    "bytes": 513,
+    "lines": 11,
+    "tokens_est": 129,
+    "sha256": "151e514c8172296a",
+    "ms": 21.5
+   },
+   {
+    "step": "git log -p -12 -- tests/run_all.py",
+    "chars": 16241,
+    "bytes": 17175,
+    "lines": 410,
+    "tokens_est": 4061,
+    "sha256": "8f7cd72255f7f4b8",
+    "ms": 25.7
+   },
+   {
+    "step": "git blame -- tests/run_all.py",
+    "chars": 10634,
+    "bytes": 10945,
+    "lines": 113,
+    "tokens_est": 2659,
+    "sha256": "93f10becc71595bb",
+    "ms": 23.3
+   }
+  ],
+  "total": {
+   "chars": 2738205,
+   "bytes": 3109307,
+   "lines": 810,
+   "tokens_est": 684554,
+   "ms": 112.6
+  },
+  "boundary": "ціна сировини, не ціна рівносильної відповіді"
+ },
+ "cairn": {
+  "path": "cairn",
+  "steps": [
+   {
+    "step": "cairn why — КОМАНДИ НЕМАЄ",
+    "chars": 0,
+    "bytes": 0,
+    "lines": 0,
+    "tokens_est": 0,
+    "sha256": "",
+    "ms": 0.0,
+    "missing": true
+   },
+   {
+    "step": "mcp cairn_semantic_query",
+    "chars": 4169,
+    "bytes": 4169,
+    "lines": 1,
+    "tokens_est": 1043,
+    "sha256": "a8674eeb84739c0f",
+    "ms": 26.7
+   },
+   {
+    "step": "mcp cairn_code_explore",
+    "chars": 374,
+    "bytes": 374,
+    "lines": 1,
+    "tokens_est": 94,
+    "sha256": "598c1b56fb3b7545",
+    "ms": 7.4
+   }
+  ],
+  "answer": null,
+  "total": {
+   "chars": 4543,
+   "bytes": 4543,
+   "lines": 2,
+   "tokens_est": 1137,
+   "ms": 34.1
+  }
+ },
+ "counter": "chars/4 proxy, див. tests/measure.py"
+}

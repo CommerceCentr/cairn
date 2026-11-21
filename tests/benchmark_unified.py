@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cairn_unified import code, context, evidence, handoff, ledger, semantic, work  # noqa: E402
+from cairn_unified import code, context, evidence, handoff, ledger, nodes, semantic, why, work  # noqa: E402
 from cairn_unified.canon import canonical  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
 
@@ -146,6 +146,36 @@ def main() -> int:
         cairn_grown_ms, _ = median_ms(cairn)
         print(f"  після зростання до {len(grown_events)} подій: naive {naive_grown_ms:.3f} мс | "
               f"Cairn {cairn_grown_ms:.3f} мс | Cairn читає 1 handoff + 1 пакет незалежно від журналу")
+
+        # --- ціна відповіді про вузол ---------------------------------
+        # Без цього рядка регресія `why` (наприклад, бюджет, який знову
+        # перестане виконуватись) пройшла б непоміченою: решта бенчмарку
+        # міряє контекст задачі, а не відповідь про вузол.
+        bench_file = "src/Pricing/PriceCalculator.php"
+        node = nodes.index(store, rid, {"kind": "system", "id": "bench-indexer"},
+                           paths=[bench_file]) and nodes.resolve(
+                               store, rid, bench_file, address=f"whole:{bench_file}")
+        why_cost = None
+        if node:
+            def why_call():
+                return canonical(why.answer(store, repo_id=rid, path=bench_file,
+                                            budget_chars=4000))
+
+            why_ms, why_value = median_ms(why_call)
+            why_cost = len(why_value)
+            answer = why.answer(store, repo_id=rid, path=bench_file, budget_chars=4000)
+            budget_kept = answer["cost"]["chars"] <= 4000 or any(
+                item["kind"] == "budget_exceeded" for item in answer["omissions"])
+            print(f"  why про вузол: {why_ms:7.3f} мс | {why_cost:5d} символів | "
+                  f"бюджет 4000 виконано або названо: {budget_kept}")
+            if not budget_kept:
+                print("FAIL: бюджет why оголошений, але не виконаний і не названий")
+                return 1
+            if why_cost >= raw_total:
+                print("FAIL: відповідь про вузол не дешевша за сире перечитування")
+                return 1
+        else:
+            print("  why про вузол: вузол не індексований — пропущено")
 
         if not digest_ok:
             print("FAIL: контекст не відтворюється")

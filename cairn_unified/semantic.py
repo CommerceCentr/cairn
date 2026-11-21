@@ -6,8 +6,24 @@ import json
 
 from .canon import prefixed
 from .errors import CairnError
-from .ontology import AUTHORITATIVE, RELATION_REGISTRY, TRUST_CLASSES
+from .ontology import (AUTHORITATIVE, LIFECYCLE_STATES, OBJECT_TYPES,
+                       RELATION_REGISTRY, TRUST_CLASSES)
+from .db import has_fts
 from .store import require_human
+
+
+#: Адреси вузлів кодової бази. Виміряно: у реальному обʼєкті `semantic.scope`
+#: містив ~50 таких ідентифікаторів, хоча за v3 §4.3 `scope` — це ОБЛАСТЬ ДІЇ
+#: (project/repo/path/symbol/environment), а не перелік вмісту.
+NODE_PREFIX = "nd-"
+
+
+def split_scope(scope: list | None) -> tuple[list, list]:
+    """(область дії, адреси вузлів). Розділення за змістом, не за позицією."""
+    values = [str(v) for v in (scope or [])]
+    nodes = [v for v in values if v.startswith(NODE_PREFIX)]
+    rest = [v for v in values if not v.startswith(NODE_PREFIX)]
+    return rest, nodes
 
 
 def put_object(store, *, object_type: str, title: str, summary: str, actor: dict,
@@ -15,9 +31,18 @@ def put_object(store, *, object_type: str, title: str, summary: str, actor: dict
                trust: str | None = None, semantic: dict | None = None,
                constraints: list | None = None, scope: list | None = None,
                object_id: str | None = None, idempotency_key: str | None = None,
-               valid_from: str | None = None, namespace: str | None = None) -> dict:
+               valid_from: str | None = None, namespace: str | None = None,
+               observed_at: str | None = None, session_id: str | None = None,
+               task_id: str | None = None, commit_refs: list | None = None,
+               evidence_refs: list | None = None) -> dict:
     if trust is None:
         trust = "human_authoritative" if actor["kind"] == "human" else "agent_proposed"
+    if object_type not in OBJECT_TYPES:
+        raise CairnError("bad_object_type", f"тип обʼєкта {object_type} не в онтології",
+                         exit_code=2, details={"allowed": list(OBJECT_TYPES)})
+    if lifecycle not in LIFECYCLE_STATES:
+        raise CairnError("bad_lifecycle", f"стан {lifecycle} не в онтології",
+                         exit_code=2, details={"allowed": list(LIFECYCLE_STATES)})
     if trust not in TRUST_CLASSES:
         raise CairnError("bad_trust", f"невідомий клас довіри {trust}")
     if actor["kind"] != "human" and trust in AUTHORITATIVE:
@@ -28,6 +53,11 @@ def put_object(store, *, object_type: str, title: str, summary: str, actor: dict
     manifest = store.manifest()
     now = store.now()
     oid = object_id or stable_key or prefixed("obj")
+    scope_only, node_refs = split_scope(scope)
+    extra_scope, extra_nodes = split_scope((semantic or {}).get("scope"))
+    if extra_nodes:
+        scope_only = scope_only or extra_scope
+        node_refs = sorted(set(node_refs) | set(extra_nodes))
     payload = {
         "id": oid,
         "object_type": object_type,
@@ -40,15 +70,34 @@ def put_object(store, *, object_type: str, title: str, summary: str, actor: dict
         "trust_class": trust,
         "valid_from": valid_from or now,
         "valid_until": None,
+        # Два часи окремо (v3 §4.7): `observed_at` — коли факт спостережено,
+        # `recorded_at` — коли записано. Раніше був лише другий, тож
+        # bi-temporal на рівні обʼєкта був неповний.
+        "observed_at": observed_at or valid_from or now,
         "recorded_at": now,
         "updated_at": now,
+        # Ланцюг заміщення тримається в самому обʼєкті, бо саме його читає
+        # той, хто питає «чи це ще чинне».
+        "supersedes": [],
+        "superseded_by": [],
         "semantic": {
             "kind": (semantic or {}).get("kind") or object_type,
-            "scope": scope or [],
+            "scope": scope_only,
+            "node_refs": node_refs,
             "constraints": constraints or [],
             **(semantic or {}),
         },
-        "provenance": {"created_by": actor, "recorded_at": now},
+        # `source_events` тут НЕ дублюється: він лежить у
+        # `object_revisions.source_event_id` — одне джерело, а не дві копії,
+        # які розійдуться. Решта посилань — нова інформація, тому в payload.
+        "provenance": {
+            "created_by": actor,
+            "recorded_at": now,
+            "session_id": session_id,
+            "task_id": task_id,
+            "commit_refs": list(commit_refs or []),
+            "evidence_refs": list(evidence_refs or []),
+        },
         "access": {"classification": "internal"},
     }
 
@@ -59,10 +108,14 @@ def put_object(store, *, object_type: str, title: str, summary: str, actor: dict
     return store.mutate(op)
 
 
-def add_assertion(store, *, subject_id: str, predicate: str, literal, actor: dict,
+def add_assertion(store, *, subject_id: str, predicate: str, literal=None, actor: dict,
                   claim_type: str = "observed", trust: str | None = None,
                   polarity: str = "asserted", scope: list | None = None,
-                  idempotency_key: str | None = None) -> dict:
+                  idempotency_key: str | None = None,
+                  object_ref: str | None = None, observed_at: str | None = None,
+                  evidence_refs: list | None = None,
+                  supersedes_assertion_id: str | None = None,
+                  confidence: float | None = None) -> dict:
     if predicate.startswith("policy.") and actor["kind"] != "human":
         raise CairnError("authority_required", "агент не змінює політику своїм текстом")
     if trust is None:
@@ -76,13 +129,23 @@ def add_assertion(store, *, subject_id: str, predicate: str, literal, actor: dic
         "subject_id": subject_id,
         "predicate": predicate,
         "literal": literal,
+        # Звʼязок «обʼєкт -> обʼєкт» (v3 §4.4). Колонка `object_ref` у таблиці
+        # була від початку, але API її не приймав, тому виразити таке
+        # твердження було нічим — лишався тільки літерал.
+        "object_ref": object_ref,
         "claim_type": claim_type,
         "polarity": polarity,
         "trust_class": trust,
-        "confidence": None if trust in AUTHORITATIVE else 0.4,
+        # Було жорстко 0.4 для всього неавторитетного. Число, яке не могло
+        # бути іншим, є означенням, не виміром, тому тепер або його задає
+        # викликач (бо знає шкалу), або його немає.
+        "confidence": confidence,
         "valid_from": now,
         "valid_until": None,
+        "observed_at": observed_at or now,
         "recorded_at": now,
+        "evidence_refs": list(evidence_refs or []),
+        "supersedes_assertion_id": supersedes_assertion_id,
         "author": actor,
         "review_state": "approved" if actor["kind"] == "human" else "unreviewed",
         "scope": scope or [],
@@ -219,7 +282,9 @@ def supersede(store, *, object_id: str, summary: str, actor: dict, title: str | 
     closed["lifecycle_state"] = "superseded"
     closed["valid_until"] = now
     closed["updated_at"] = now
-    closed["superseded_by"] = new_id
+    # Списком, не рядком: обʼєкт можуть замістити більше ніж один раз, і
+    # одна форма поля в усіх місцях дешевша за дві.
+    closed["superseded_by"] = sorted({*(closed.get("superseded_by") or []), new_id})
     opened = {
         **{k: closed[k] for k in ("object_type", "namespace", "trust_class", "semantic", "access")},
         "id": new_id,
@@ -230,9 +295,17 @@ def supersede(store, *, object_id: str, summary: str, actor: dict, title: str | 
         "summary": summary,
         "valid_from": now,
         "valid_until": None,
+        "observed_at": closed.get("observed_at") or now,
         "recorded_at": now,
         "updated_at": now,
-        "provenance": {"created_by": actor, "supersedes": object_id},
+        "supersedes": [object_id],
+        "superseded_by": [],
+        "provenance": {
+            **(closed.get("provenance") or {}),
+            "created_by": actor,
+            "recorded_at": now,
+            "supersedes": object_id,
+        },
     }
 
     def op(con):
@@ -272,25 +345,77 @@ def revoke(store, *, object_id: str, actor: dict, reason: str) -> dict:
     return store.mutate(op)
 
 
+def _text_match(store, text: str) -> list[str]:
+    """Пошук за текстом через FTS5, із запасом на збірки без нього.
+
+    Таблиця `search_fts` ЗАПОВНЮВАЛАСЬ і ніколи не читалася: пошук робив
+    підрядкове порівняння в Python, яке до того ж не розрізняє код від
+    коментаря. `has_fts()` каже, чи є FTS у цій збірці SQLite; якщо немає,
+    працює `search_fallback` — той самий підрядок, але хоча б в SQL.
+    """
+    needle = (text or "").strip()
+    if not needle:
+        return []
+    con = store.connect()
+    try:
+        if has_fts(con):
+            # `MATCH` із префіксом: користувач пише слово, не FTS-синтаксис.
+            escaped = needle.replace('"', " ")
+            rows = con.execute(
+                'SELECT object_id FROM search_fts WHERE search_fts MATCH ? LIMIT 500',
+                (f'"{escaped}"*',),
+            ).fetchall()
+            if rows:
+                return [row["object_id"] for row in rows]
+        like = f"%{needle.lower()}%"
+        rows = con.execute(
+            "SELECT object_id FROM search_fallback "
+            "WHERE lower(title) LIKE ? OR lower(body) LIKE ? LIMIT 500",
+            (like, like),
+        ).fetchall()
+        return [row["object_id"] for row in rows]
+    finally:
+        con.close()
+
+
 def query(store, *, object_type: str | None = None, trust: str | None = None,
           as_of: str | None = None, known_at: str | None = None,
           text: str | None = None, active_only: bool = True,
           predicate: str | None = None, subject_id: str | None = None) -> dict:
-    objects = store.read("SELECT * FROM objects")
+    # Фільтри — у SQL, не повним скануванням у Python. Індекси
+    # `idx_objects_type` і `idx_assert_subject` існували від початку й не
+    # використовувалися: `SELECT *` читав таблицю цілком, а потім Python
+    # відкидав зайве. На 151 обʼєкті це не видно, на 10k — буде.
+    sql = ["SELECT * FROM objects WHERE 1=1"]
+    params: list = []
     if object_type:
-        objects = [row for row in objects if row["object_type"] == object_type]
+        sql.append("AND object_type = ?")
+        params.append(object_type)
     if trust:
-        objects = [row for row in objects if row["trust_class"] == trust]
+        sql.append("AND trust_class = ?")
+        params.append(trust)
+    ids = _text_match(store, text) if text else None
+    if ids is not None:
+        if not ids:
+            objects = []
+            sql = None
+        else:
+            marks = ",".join("?" * len(ids))
+            sql.append(f"AND id IN ({marks})")
+            params.extend(ids)
+    if sql is not None:
+        objects = store.read(" ".join(sql), tuple(params))
     objects = [row for row in objects if _visible(row, as_of, known_at, active_only)]
-    if text:
-        needle = text.lower()
-        objects = [row for row in objects if needle in ((row.get("title") or "") + (row.get("summary") or "")).lower()
-                   or needle in (row.get("payload_json") or "").lower()]
-    assertions = store.read("SELECT * FROM assertions")
+
+    asql = ["SELECT * FROM assertions WHERE 1=1"]
+    aparams: list = []
     if subject_id:
-        assertions = [row for row in assertions if row["subject_id"] == subject_id]
+        asql.append("AND subject_id = ?")
+        aparams.append(subject_id)
     if predicate:
-        assertions = [row for row in assertions if row["predicate"] == predicate]
+        asql.append("AND predicate = ?")
+        aparams.append(predicate)
+    assertions = store.read(" ".join(asql), tuple(aparams))
     assertions = [row for row in assertions if _visible(row, as_of, known_at, active_only)]
     if active_only and as_of is None:
         assertions = [row for row in assertions if row["trust_class"] != "rejected_or_revoked"]
@@ -300,6 +425,41 @@ def query(store, *, object_type: str | None = None, trust: str | None = None,
         "objects": [_public_object(row) for row in objects],
         "assertions": [_public_assertion(row) for row in assertions],
     }
+
+
+def revisions(store, object_id: str) -> list[dict]:
+    """Усі ревізії обʼєкта, від першої до останньої."""
+    return store.read(
+        "SELECT revision, payload_hash, valid_from, valid_until, recorded_at, "
+        "source_event_id FROM object_revisions WHERE object_id = ? ORDER BY revision",
+        (object_id,),
+    )
+
+
+def object_as_of(store, object_id: str, when: str | None = None) -> dict | None:
+    """Обʼєкт, яким він БУВ на момент `when` (за `recorded_at` ревізії).
+
+    Без ревізій відповідь на «що тут було раніше» спиралася лише на поточний
+    рядок `objects`, тобто показувала теперішнє під виглядом минулого.
+    `when=None` означає останню ревізію.
+    """
+    if when:
+        row = store.read_one(
+            "SELECT payload_json, revision FROM object_revisions "
+            "WHERE object_id = ? AND recorded_at <= ? ORDER BY revision DESC LIMIT 1",
+            (object_id, when),
+        )
+    else:
+        row = store.read_one(
+            "SELECT payload_json, revision FROM object_revisions "
+            "WHERE object_id = ? ORDER BY revision DESC LIMIT 1",
+            (object_id,),
+        )
+    if row is None:
+        return None
+    body = json.loads(row["payload_json"])
+    body["_revision"] = row["revision"]
+    return body
 
 
 def explain_trust(store, assertion_id: str) -> dict:

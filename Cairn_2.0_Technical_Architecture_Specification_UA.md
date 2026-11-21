@@ -2,7 +2,8 @@
 
 ## Технічна архітектура та специфікація розробки (TAS)
 
-**Статус:** Draft for implementation\
+**Статус:** Draft for implementation (архівний проєктний документ)\
+**Чинна реалізація:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)\
 **Версія:** 1.0\
 **Розгортання:** повністю локальне, self-hosted\
 **Стратегія:** greenfield redesign\

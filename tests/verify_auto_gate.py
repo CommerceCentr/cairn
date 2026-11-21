@@ -10,14 +10,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+sys.path.insert(0, str(ROOT / "tests"))
+
+from fixture_repo import PHP_FILE, make_packs, make_repo  # noqa: E402
+
 from cairn_unified import code, nodes, semantic, verification  # noqa: E402
 from cairn_unified.canon import sha256_text  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
 
-REPO = Path(r"Q:\650\home\beta.loc")
-FILE = "core/Engine/Controller.php"
+# Раніше тут стояв приватний диск автора, і цей тест був у воротах CI.
+# Виміряно: без того диска він давав exit 1, тож ворота на чужій машині
+# зеленими бути не могли. Тепер усе створюється в temp.
+FILE = PHP_FILE
 WHOLE = f"whole:{FILE}"
-PACKS = Path(r"Q:\650\home\_archivist\packs_python")
+PACK_NAME = "pack-fixture.txt"
+PACK_TEXT = "PACK fixture ZONE fixture HEAD 0000000 FRESH BUDGET 8000\nTASK auto-gate\n"
 ACTOR = {"kind": "system", "id": "gate-test"}
 
 
@@ -40,15 +47,18 @@ def count_events(store, kind: str) -> int:
 def main() -> int:
     temp = Path(tempfile.mkdtemp(prefix="autogate-"))
     try:
-        Store(temp).init()
-        store = Store.open(temp)
+        repo = make_repo(temp / "repo")
+        REPO = Path(repo["path"])
+        PACKS = make_packs(temp / "packs", {PACK_NAME: PACK_TEXT})
+        Store(temp / "store").init()
+        store = Store.open(temp / "store")
         ident = code.git.identity(str(REPO))
         store.mutate(lambda con: store.append(con, "repository.upserted", ident["id"],
                                               ident, ACTOR, f"repo:{ident['id']}"))
         nodes.index(store, ident["id"], ACTOR, paths=[FILE])
 
-        pack_name = "pack-py-beta.loc.txt"
-        real_commit = code.git.git(str(REPO), "rev-parse", "HEAD").strip()
+        pack_name = PACK_NAME
+        real_commit = repo["head"]
         good_digest = sha256_text((PACKS / pack_name).read_text(encoding="utf-8"))
 
         bad = make_object(store, key="gate-bad", commit="0" * 40,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -15,12 +16,30 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from cairn_unified import code, context, history, nodes, semantic, work  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
-from full_measurement_suite import TOK, measure, norm  # noqa: E402
+# Цей тест НЕ переносний, і це названо прямо, а не приховано.
+# Він потребує `full_measurement_suite` (приватний, залежить від `tokenizers`
+# і кешу HuggingFace) та зон на приватному диску. У публічному репозиторії
+# модуля немає — раніше це давало ModuleNotFoundError, і оскільки тест не
+# стояв у воротах, падіння було беззвучним. Тепер він пропускається з
+# НАЗВАНОЮ причиною: пропуск, про який сказано, кращий за падіння, якого
+# ніхто не бачить, і кращий за «зелено», якого не заслужили.
+try:
+    from full_measurement_suite import TOK, measure, norm  # noqa: E402
+except ModuleNotFoundError as exc:                          # noqa: F401
+    print(f"SKIP verify_auto_dossier: немає {exc.name} "
+          "(приватний вимірювальний набір)")
+    raise SystemExit(0) from None
 
-REPO = Path(r"Q:\650\home\beta.loc")
+REPO = Path(os.environ.get("CAIRN_DOSSIER_REPO", r"Q:\650\home\beta.loc"))
 FILE = "core/Engine/Controller.php"
 WHOLE = f"whole:{FILE}"
-PACKS = Path(r"Q:\650\home\_archivist\packs_python")
+PACKS = Path(os.environ.get("CAIRN_DOSSIER_PACKS",
+                           r"Q:\650\home\_archivist\packs_python"))
+
+if not REPO.exists() or not PACKS.exists():
+    print(f"SKIP verify_auto_dossier: немає {REPO} або {PACKS} "
+          "(задати CAIRN_DOSSIER_REPO / CAIRN_DOSSIER_PACKS)")
+    raise SystemExit(0)
 H = {"kind": "human", "id": "observer"}
 S = {"kind": "system", "id": "auto-indexer"}
 CLASSDOC = (

@@ -20,7 +20,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from . import code, compaction_link, context, nodes, semantic, verification
@@ -30,9 +29,12 @@ GENESIS = "causal_history/1.0"
 
 
 def _git(repo: str | Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args],
-                          check=True, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace").stdout.strip()
+    """Через `code.git`, не через subprocess напряму.
+
+    Прямий виклик обходив allow-list дозволених verbs у `code/git.py` —
+    тобто одні з двох дверей у git не перевіряли нічого.
+    """
+    return code.git.git(str(repo), *args).strip()
 
 
 def _changed(repo: str | Path, commit: str) -> list[tuple[str, str]]:
@@ -114,7 +116,16 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
         store, events=events, links=mutations["links"], session_obj=session_obj,
         opencode_db=opencode_db, actor=actor, commit=full)
 
-    specs = zone_specs or (("cairn", str(repo_path), "*.py"),)
+    # Було: дефолтна зона з іменем "cairn" і маскою "*.py" — назва ЦЬОГО
+    # репозиторію в загальному модулі. Тепер зона береться з імені теки
+    # репозиторію, а маска — з розширення файлів, що змінилися: ні те,
+    # ні інше не вигадується.
+    if zone_specs:
+        specs = tuple(zone_specs)
+    else:
+        suffixes = {Path(path).suffix for _status, path in changed if Path(path).suffix}
+        mask = f"*{sorted(suffixes)[0]}" if len(suffixes) == 1 else "*"
+        specs = ((Path(repo_path).name, str(repo_path), mask),)
     refs = zone_mod.object_refs(
         store, [session_obj["id"], str(rejected["id"]),
                 str(auto["object"]["id"])]
@@ -154,8 +165,9 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
     verified: dict[str, dict] = {}
     if auto_verify:
         for oid in objects:
+            # Шлях до БД передається явно: у payload його більше немає.
             verified[oid] = verification.verify_object(
-                store, oid, repo_path=repo_path)
+                store, oid, repo_path=repo_path, opencode_db=opencode_db)
 
     package = context.build(store, work_id, purpose="understand",
                             budget_chars=budget_chars,

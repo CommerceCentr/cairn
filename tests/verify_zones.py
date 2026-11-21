@@ -201,9 +201,16 @@ def main() -> int:
         checks.append(("об'єкт містить обидва журнали й протокол",
                        sum(z["journal_lines"] for z in snap) == 3
                        and obj["semantic"]["protocol"] == zones.PROTOCOL))
-        checks.append(("без нових таблиць БД",
-                       ontology.DB_SCHEMA_VERSION == 1
-                       and obj["semantic"]["no_new_db_tables"] is True))
+        # Було складено ДВІ різні причини під однією міткою: властивість
+        # ЗОН (не додали таблиць) і глобальне число версії схеми, яке
+        # змінюється з причин, до зон не дотичних. Версія справді змінилась
+        # (2: додано `object_revisions` за v3 §18.1), і ця перевірка падала,
+        # хоча про зони вона нічого не казала. Тепер якір — зміст.
+        tables = {row["name"] for row in store.read(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        zone_tables = sorted(t for t in tables if "zone" in t.lower())
+        checks.append(("зони не додали таблиць БД",
+                       not zone_tables and obj["semantic"]["no_new_db_tables"] is True))
 
         # Реверс: зіпсований fence у дескрипторі не дає тихо перезаписати журнал.
         bad = zones.descriptor_path(store.root, "cc.one")

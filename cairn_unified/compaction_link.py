@@ -29,7 +29,9 @@ import hashlib
 from pathlib import Path
 
 from . import nodes, semantic
+from .ontology import DEFAULTS
 from .canon import canonical, sha256_text
+from .errors import CairnError
 from .code import git
 
 #: Repository-relative prefix normalization. Tool paths are absolute
@@ -37,22 +39,47 @@ from .code import git
 _SEP = "\\"
 
 
-def path_variants(path: str, repo_path: str | Path) -> list[str]:
-    """Історичний шлях + його канонічний варіант після переносу в корінь.
+#: Типове правило переносу. Береться з `DEFAULTS["path_rewrites"]`, щоб
+#: значення не існувало у двох місцях.
+DEFAULT_REWRITES = tuple(DEFAULTS["path_rewrites"])
 
-    Коміти й події зберегли `src/cairn_unified/...`, але пакет тепер лежить
-    у корені. Варіант додається лише тоді, коли файл справді існує, — не
-    за припущенням. Це дає змогу резолвити той самий вузол на обох машинах.
+
+def parse_rewrites(values) -> tuple[tuple[str, str], ...]:
+    """`["старий/->новий/"]` -> кортеж пар. Непарні записи ігноруються."""
+    out: list[tuple[str, str]] = []
+    for item in values or ():
+        text = str(item)
+        if "->" not in text:
+            continue
+        old, new = text.split("->", 1)
+        if old:
+            out.append((old, new))
+    return tuple(out)
+
+
+def path_variants(path: str, repo_path: str | Path, *,
+                  rewrites=DEFAULT_REWRITES) -> list[str]:
+    """Історичний шлях + його варіанти після переносу теки.
+
+    Правило переносу приходить КОНФІГОМ (`path_rewrites`), а не прошите в
+    коді: раніше тут стояв `src/cairn_unified/` -> корінь, тобто правило
+    одного репозиторію жило в загальному модулі й на чужому репозиторії
+    нічого не означало.
+
+    Варіант додається лише тоді, коли файл СПРАВДІ існує, — не за
+    припущенням.
     """
     out = [str(path)]
-    if str(path).startswith("src/cairn_unified/"):
-        moved = str(path)[len("src/"):]
-        if (Path(repo_path) / moved).is_file():
-            out.append(moved)
+    for old, new in parse_rewrites(rewrites):
+        if str(path).startswith(old):
+            moved = new + str(path)[len(old):]
+            if moved != str(path) and (Path(repo_path) / moved).is_file():
+                out.append(moved)
     return out
 
 
-def normalize_path(path: str, repo_path: str | Path | tuple) -> str | None:
+def normalize_path(path: str, repo_path: str | Path | tuple, *,
+                   rewrites=DEFAULT_REWRITES) -> str | None:
     """Абсолютний шлях події -> repo-відносний, або None якщо поза репо.
 
     Приймає кілька коренів: одна сесія може правити публічний і приватний
@@ -71,10 +98,12 @@ def normalize_path(path: str, repo_path: str | Path | tuple) -> str | None:
             # лише в корені події: мутація сталася в приватному checkoutі зі
             # старою розкладкою, а індекс вузлів будується за новою (публічною).
             # Виміряно: інакше 11025 випадав з індексу й намір 10987 губився.
-            if rel.startswith("src/cairn_unified/"):
-                moved = rel[len("src/"):]
-                if any((Path(r) / moved).is_file() for r in roots):
-                    rel = moved
+            for old, new in parse_rewrites(rewrites):
+                if rel.startswith(old):
+                    moved = new + rel[len(old):]
+                    if moved != rel and any((Path(r) / moved).is_file() for r in roots):
+                        rel = moved
+                        break
             return rel
     return None
 
@@ -167,7 +196,10 @@ def session_object(store, *, session_id: str, compaction: dict,
             "summary_sha256": sha256_text(summary),
             "reason": compaction.get("reason") or "",
             "commit": commit,
-            "opencode_db": opencode_db,
+            # Абсолютний шлях у payload розкривав імʼя користувача й їхав
+            # у bundle. Розташування БД — локальна річ: його дає викликач
+            # або OPENCODE_DB, а не збережений обʼєкт.
+            "source_kind": "opencode",
         },
         scope=list(scope or []),
     )["object"]
@@ -273,7 +305,7 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
             "kind": "unresolved_mutations", "commit": commit, "repo_id": repo_id,
             "session_id": str(session_obj["semantic"].get("session_id") or ""),
             "session_obj_id": str(session_obj["id"]),
-            "opencode_db": opencode_db, "repo_roots": list(repo_roots),
+            "source_kind": "opencode", "repo_roots": list(repo_roots),
             "unresolved_count": len(unresolved),
             "unresolved_by_reason": counts,
             "unresolved_digest": unresolved_digest(unresolved),
@@ -294,8 +326,13 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
     """
     try:
         full = git.git(str(repo_path), "rev-parse", f"{commit}^{{commit}}").strip()
-    except Exception:
-        return {"resolved": "", "mutated": [], "unresolved": ["commit_not_found"]}
+    except CairnError as exc:
+        # `git_failed` означає, що git відповів і коміта немає. Будь-що інше
+        # означає, що git не запустився, і це інша причина з іншим лікуванням.
+        reason = "commit_not_found" if exc.code == "git_failed" else "git_unavailable"
+        return {"resolved": "", "mutated": [], "unresolved": [reason]}
+    except OSError:
+        return {"resolved": "", "mutated": [], "unresolved": ["git_unavailable"]}
     if not full:
         return {"resolved": "", "mutated": [], "unresolved": ["commit_not_found"]}
     status = git.git(str(repo_path), "show", "--name-status", "--format=", full)
@@ -435,7 +472,7 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
             "compaction_message_id": cmp_msg,
             "basis": "opencode_events", "generator": "compaction_link/auto_compaction/1.1",
             "chain_shown": len(shown_chain), "chain_total": len(ordered),
-            "summary_sha256": sha256_text(text), "opencode_db": opencode_db,
+            "summary_sha256": sha256_text(text), "source_kind": "opencode",
             "intent_refs": intent_refs,
             "mutation_event_ids": [str(l["event_id"]) for l in ordered],
             "linked_nodes": len(ordered),

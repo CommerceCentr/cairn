@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS objects (
 );
 CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(object_type, lifecycle_state);
 CREATE INDEX IF NOT EXISTS idx_objects_key ON objects(stable_key);
+CREATE TABLE IF NOT EXISTS object_revisions (
+    id TEXT PRIMARY KEY,
+    object_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    valid_from TEXT,
+    valid_until TEXT,
+    recorded_at TEXT NOT NULL,
+    source_event_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_obj_rev
+    ON object_revisions(object_id, revision);
+CREATE INDEX IF NOT EXISTS idx_obj_rev_time
+    ON object_revisions(object_id, valid_from);
 CREATE TABLE IF NOT EXISTS assertions (
     id TEXT PRIMARY KEY,
     subject_id TEXT NOT NULL,
@@ -290,17 +305,38 @@ def connect(path: Path) -> sqlite3.Connection:
     return con
 
 
-def ensure(con: sqlite3.Connection, applied_at: str) -> None:
-    con.executescript(SCHEMA)
-    row = con.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
+def stored_version(con: sqlite3.Connection) -> int | None:
+    """Версія схеми в базі, або None для щойно створеної. Нічого не змінює."""
+    row = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+    ).fetchone()
     if row is None:
-        con.execute(
-            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
-            (DB_SCHEMA_VERSION, applied_at),
-        )
-    elif int(row["version"]) > DB_SCHEMA_VERSION:
+        return None
+    row = con.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
+    return None if row is None else int(row["version"])
+
+
+def set_version(con: sqlite3.Connection, version: int, applied_at: str) -> None:
+    con.execute("DELETE FROM schema_meta")
+    con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+                (version, applied_at))
+
+
+def ensure(con: sqlite3.Connection, applied_at: str) -> int | None:
+    """Створити схему; повернути версію, яка БУЛА в базі до цього.
+
+    Повернене значення — вхід для міграції: `None` означає нову базу,
+    менше за `DB_SCHEMA_VERSION` — базу, яку треба перебудувати з журналу.
+    Раніше функція нічого не повертала, тому дізнатися про старішу схему
+    було нізвідки, і міграції не існувало.
+    """
+    was = stored_version(con)
+    con.executescript(SCHEMA)
+    if was is None:
+        set_version(con, DB_SCHEMA_VERSION, applied_at)
+    elif was > DB_SCHEMA_VERSION:
         raise sqlite3.DatabaseError(
-            f"схема бази {row['version']} новіша за читач {DB_SCHEMA_VERSION}"
+            f"схема бази {was} новіша за читач {DB_SCHEMA_VERSION}"
         )
     try:
         con.execute(
@@ -308,7 +344,11 @@ def ensure(con: sqlite3.Connection, applied_at: str) -> None:
             "USING fts5(object_id UNINDEXED, title, body)"
         )
     except sqlite3.OperationalError:
+        # FTS5 немає у цій збірці SQLite: пошук падає назад на
+        # `search_fallback`. Тихо — бо це не дефект, а властивість збірки;
+        # побачити це можна через `has_fts()`.
         pass
+    return was
 
 
 def has_fts(con: sqlite3.Connection) -> bool:

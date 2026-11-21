@@ -54,18 +54,22 @@ sessions per week) that is ≈**57 K tokens a session, 113 K a week,
 ```text
    agent session journals ----+
                               |
-   git history ---------------+--->  portable store   --->  why <file>
-                                     JSONL, 7.2 MB          why --node <symbol>
-                                     local, yours           bind --zone <zone>
+   git history ---------------+--->  .cairn/  --->  cairn2 why node <path>
+                                     Event Ledger + SQLite  cairn2 why node <path>
+                                     local, yours           cairn2 federation import
 ```
 
 ```bash
-python cairn.py index --store ./store                   # collect
-python cairn.py why   --store ./store <path or node>    # ask
-python cairn.py merge --store ./store --other <theirs>  # sync devices
+python -m cairn_unified project init
+python -m cairn_unified repo add <path>
+python -m cairn_unified code index <repo_id>
+python -m cairn_unified context compile <work_id> --budget 8000
+python -m cairn_unified why node <path> --commit <sha>   # when and why
+python -m cairn_unified mcp tools                  # 12 agent tools
 ```
 
-**Python standard library only.** No database, no daemon, no cloud.
+**Python standard library only.** The Event Ledger is the source of truth;
+SQLite is a projection rebuilt from it. No daemon, no cloud.
 
 ```text
 1  ADDRESS CONTENT, NOT POSITION
@@ -91,39 +95,83 @@ Full onboarding: [`AGENT-ONBOARD.md`](AGENT-ONBOARD.md).
 ```text
 WHEN TO ASK   before editing an unfamiliar node; when the code looks
               wrong but deliberate; when a fix keeps coming back
-WHAT YOU GET  compacted contexts of past sessions that touched that node,
-              newest first, bounded by --priority
+WHAT YOU GET  a bounded context package: past sessions' compacted contexts,
+              active decisions and governing evidence, newest first
 WHAT YOU DO   NOT get: current code (read it yourself), documentation,
-              or a causal claim — the link is session-level
+              or a semantic-causal claim — the link proves time/path only
 ```
 
 | kind | unit | example address | what it is |
 |---|---|---|---|
-| `symbol` | byte | `method:Ns\Class::name` | class, method, function |
+| `symbol` | byte | `symbol:run_all` | class, method, function (normalized name) |
 | `section` | byte | `section:Intro/Limits` | heading and its text |
+| `page` | page | `page:` | page of a document |
 | `segment` | second | `segment:00:04:12` | audio or video range |
-| `whole` | none | `whole:` | the file as one node |
+| `whole` | none | `whole:src/app.py` | the file; v2 includes the path |
 
 ```bash
-python cairn.py why --store ./store src/app.py            # whole file
-python cairn.py why --store ./store --node 'method:App::run'
-python cairn.py why --store ./store src/app.py --priority low   # ≈2 000 chars
-python cairn.py stats --store ./store                     # what is indexed
+python -m cairn_unified project doctor                     # store health
+python -m cairn_unified context compile <work_id> --budget 2000
+python -m cairn_unified code nodes <repo_id>               # what is indexed
+python -m cairn_unified mcp tools                          # 12 agent tools
 ```
 
-```text
---priority  low 2 000 · normal 8 000 · high 24 000 · max 100 000 chars
---on-overflow  trim (default) · ask · allow
+Semantic queries go through `cairn_semantic_query` (MCP); the amount of
+context is bounded by `--budget` in **characters**, not tokens.
 
-exit 0  an answer was printed (`stats` always exits 0)
-exit 1  nothing found: no session ever touched that file or node —
-        this is an ANSWER, not a failure. Also: a rejected adapter
-exit 2  usage: no --zone, or no archivist root for `bind`
+```text
+--budget   characters, not tokens; default 8 000
+           context compile also accepts --agent, --purpose, --as-of, --persist
+
+exit 0  success
+exit 1  not found — an ANSWER, not a failure
+exit 2  usage / contract error (unknown argument, unknown tool)
+exit 3  domain error (default CairnError)
+exit 4  refusal: stale_fence, corrupted bundle, merge_refused
 ```
 
 Exit 1 is the one to get right. It does not mean the tool broke; it
 means the history is silent, and silence must not be filled with a
 guess.
+
+---
+
+## When and why was this node edited
+
+```bash
+python -m cairn_unified why node tests/run_all.py --commit 942cb526 --budget 8000
+```
+
+```text
+answer       КОЛИ / СЕСІЯ / ЧОМУ / МЕЖА, assembled from stored objects
+chronology   events in time order, each with its edge type and count
+provenance   event ids and ledger_seq per object
+trust        trust class and freshness PER ITEM, never averaged into one number
+omissions    what was left out, and which of TWO reasons:
+             unresolved:*     the source is absent
+             verifier_error:* the check itself broke
+cost         bytes, chars, tokens_est of this answer
+```
+
+Measured 2026-11-21 on a private store (1 876 events), both paths by the
+same counter in one run (`tests/compare_why.py`):
+
+| path | bytes | tokens ≈ | ms |
+|---|---:|---:|---:|
+| native: ledger scan + `git log -1` + `show --name-status` + `log -p -12` + `blame` | 3 111 792 | 685 099 | 114 |
+| `why --budget 8000` | 8 326 | 1 983 | 56 |
+| `why --budget 2000` | 2 498 | 507 | 52 |
+
+**Two different boundaries, not one number.** Raw material vs a finished
+answer: **×345** by tokens at budget 8 000, **×1 351** at 2 000. Raw
+material vs the whole Cairn path (`why` + two MCP calls): **×220** and
+**×417**. Neither compares against an equivalent `grep` answer — the
+native path never tried to reconstruct the cause, so its cost is the cost
+of **raw material**. Tokens are `chars ÷ 4`, a proxy, not the target
+model's tokenizer.
+
+The link proves **participation in time and path**, not semantic cause.
+A commit is never declared a cause.
 
 ---
 
@@ -143,6 +191,31 @@ Every figure below has a named reference and a stated limit in
 | Merge, repeated | the same store merged twice | **0** duplicates added |
 | Portability | the store folder copied elsewhere | **byte-identical** output |
 
+The table above is an earlier dry-measurement state and is kept as-is. A
+later measurement answers the exact question *"when was `tests/run_all.py`
+edited and why, with commit `942cb526…`?"* on the private store
+(151 objects, 1 800 relations, 1 876 events):
+
+| Path | What it returns | Bytes | Tokens ≈ | Time |
+|---|---|---:|---:|---:|
+| Line scan of `.cairn` + `git log -1` + `git show --name-status` + `git log -p -12` + `git blame` | 307 raw JSONL lines and 12 full diffs | **3 908 929** | **856 582** | 180.1 ms |
+| Cairn: `cairn_semantic_query` | 20 objects + 20 assertions in a provenance envelope | 4 064 | 1 016 | 27.6 ms |
+| Cairn: `cairn_code_explore` | symbols by stable identity | 374 | 94 | 8.4 ms |
+| Cairn: causal edges `nd-* → session → commit_fact` | typed edges | 3 583 | 896 | 4.7 ms |
+| **Cairn: final answer** (4 objects) | date, session, 9 user-intents, 221 mutation events, why | **1 462** | **284** | **2.3 ms** |
+
+The final answer is **≈3 016× smaller in tokens** than the raw material;
+the full measured Cairn path (all four rows) is 2 290 tokens and 43.0 ms
+— **≈374× and ≈4.2×**. These are two different comparison boundaries,
+not one combined figure. Neither compares against an equivalent grep
+answer. A separate qualitative result: a line scan returns commit facts
+and user intent as undifferentiated lines, with no typed edges
+(`caused_by`, `mutated`, `derived_from`) — the distinction has to be
+reconstructed by the reader, and that labour is not in the token count.
+This is a property of grep's output, not proof that an answer is
+impossible. Full method and limits: §11 of
+[`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
+
 ```text
 input     2.5 GB of journals · 1 088 files
 store     7.2 MB · 13 068 records · 68 sessions · 119 compacted contexts
@@ -151,6 +224,10 @@ coverage  symbol 29.2 % · whole 70.2 % · section 0.6 %
 privacy   418 redactions on live data (incl. a REAL connection string
           with a password) · 0 absolute paths · 0 user names
 ```
+
+The `store` figures above belong to that earlier state. The later private
+store has 151 objects, 1 800 relations and 1 876 events — not a revision of
+the 13 068-record figure, but a different measurement.
 
 ---
 
@@ -172,12 +249,14 @@ anything where no agent sessions existed.
 ## Inside
 
 ```text
-cairn.py    single entry point
-core/       contract · store · paths · manifest · redact · budget
-adapters/   journal collectors (+ deliberate fakes for the gate)
-extract/    php · python · markdown · media sidecars
-bind/       optional external symbol index
-tests/      a bypass list for every layer
+cairn_unified/  v2 package at the repo root (CLI `cairn2`, 12 MCP tools)
+  store.py, ledger.py, db.py, projections.py   Event Ledger + SQLite view
+  semantic.py, ontology.py, nodes.py           objects, trust, addresses
+  context.py, work.py, workflow.py             bounded context, work graph
+  zones.py, merge.py, federation.py            zones, git-linked merge, bundles
+  verification.py, evidence.py, gates.py       deterministic checks
+adapters/       journal collectors (opencode is the reference)
+tests/          run_all.py + verify_* regressions
 
 repo_id     fingerprint of the SET of root commits — identical in any
             clone, on any machine, for any account
@@ -199,12 +278,14 @@ model's judgement is a skill. Setup and plugin layout:
 [`docs/INTEGRATION.md`](docs/INTEGRATION.md).
 
 Drop [`AGENT-ONBOARD.md`](AGENT-ONBOARD.md) wherever your agent reads its
-rules and it will connect itself. The gate checks the result — both lines
-are mandatory, since rejection alone would prove nothing:
+rules. Interface notes live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The regressions include explicit reversals — a positive case alone would
+prove nothing:
 
 ```bash
-python cairn.py selftest --store ./store --adapter _probe_empty    # exit 1
-python cairn.py selftest --store ./store --adapter claude_code     # exit 0
+python tests/run_all.py         # 15/15
+python tests/verify_zones.py    # 29/29
+python tests/verify_merge.py    # 16/16
 ```
 
 ---
@@ -218,7 +299,9 @@ python cairn.py selftest --store ./store --adapter claude_code     # exit 0
   recall 88.7–93.9 %, measured, not estimated;
 * a repository with no sessions returns an empty answer, and that is
   correct: the tool does not invent what never happened;
-* the context→node link is SESSION-level, not causal;
+* the link proves participation in time and path, not semantic cause:
+  `node --caused_by--> session`, while a commit is a CrUD fact
+  (`commit_fact --mutated--> node`), not the reason for an edit;
 * journals outlive repositories: index BEFORE deleting a project;
 * session journal formats are internal to each agent and may change —
   the adapter is a sample, not a contract;

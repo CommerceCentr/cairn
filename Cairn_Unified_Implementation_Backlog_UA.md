@@ -3,7 +3,7 @@
 
 **Версія:** 1.0  
 **Дата:** 19 листопада 2026  
-**Статус:** Ready for technical planning; implementation not started  
+**Статус:** історичний план. Реалізацію v2 виконано; чинний стан — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).  
 **Базова специфікація:** `Cairn_Unified_Technical_Specification_UA.md`  
 **Призначення:** перетворити архітектуру Cairn Unified на впорядкований, перевірюваний план розробки та зафіксувати перший наскрізний сценарій до написання production-коду.
 

@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .canon import canonical, sha256_text
+from .canon import audit_digest, canonical, iso, sha256_text
 from . import federation, ledger, semantic
 
 DEFAULT_TTL_S = 30.0
@@ -108,6 +109,18 @@ class _NonBlockingLock:
         return self.fh is not None
 
 
+def iso_of_ms(ms: int | float | None) -> str | None:
+    """epoch-ms -> ISO-8601 ms Z. Один хелпер, щоб конверсія була одна.
+
+    Арифметика оренди лишається в мілісекундах; ISO потрібен для порівняння
+    з журналом подій, де час лише в ISO. Без цього кожен читач конвертував
+    би сам, і рано чи пізно по-різному.
+    """
+    if ms is None:
+        return None
+    return iso(datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc))
+
+
 def object_refs(store, ids: list[str]) -> list[dict]:
     """Відносні посилання на семантичні об'єкти всередині cairn.
 
@@ -149,6 +162,7 @@ def descriptor(store, zone: str, *, repo: str, pathspec: str,
                 "lease_expires_ms": None,
                 "created_by": str(actor.get("id") or ""),
                 "created_at_ms": int(time.time() * 1000),
+                "created_at": iso_of_ms(time.time() * 1000),
                 "context_refs": [],
                 "context_identity": {},
             }
@@ -190,6 +204,7 @@ def acquire(store, zone: str, actor: dict, *, ttl_s: float = DEFAULT_TTL_S,
         current["fence"] = int(current.get("fence") or 0) + 1
         current["owner"] = str(actor.get("id") or "")
         current["lease_expires_ms"] = now + int(ttl_s * 1000)
+        current["lease_expires_at"] = iso_of_ms(current["lease_expires_ms"])
         _write(descriptor_path(root, zone), current)
         return {"ok": True, "status": "acquired", "fence": current["fence"],
                 "head": int(current["head"]), "descriptor": current}
@@ -231,7 +246,8 @@ def append(store, zone: str, actor: dict, fence: int, payload: dict) -> dict:
         jpath.parent.mkdir(parents=True, exist_ok=True)
         row = {"seq": seq, "zone": zone, "fence": int(fence),
                "actor": str(actor.get("id") or ""),
-               "ts_ms": int(time.time() * 1000), "payload": payload}
+               "ts_ms": int(time.time() * 1000),
+               "ts": iso_of_ms(time.time() * 1000), "payload": payload}
         with open(jpath, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
             fh.flush()
@@ -263,6 +279,7 @@ def release(store, zone: str, actor: dict, fence: int) -> dict:
         current["fence"] = int(fence) + 1
         current["owner"] = None
         current["lease_expires_ms"] = None
+        current["lease_expires_at"] = None
         _write(path, current)
         return {"ok": True, "status": "released", "fence": current["fence"],
                 "head": int(current["head"])}
@@ -374,7 +391,7 @@ def import_bundle(store, bundle: dict, *, actor: dict) -> dict:
         return {"ok": False, "status": "bad_protocol"}
     audit = dict(bundle)
     audit.pop("digest", None)
-    if sha256_text(json.dumps(audit, ensure_ascii=False, sort_keys=True)) \
+    if audit_digest(audit) \
             != bundle.get("digest"):
         return {"ok": False, "status": "bad_digest"}
     causal_events = 0
@@ -451,7 +468,7 @@ def context_object(store, *, zones: list[str], actor: dict,
     rows = snapshot(store, zones)
     bundle = export_bundle(store, zones)
     state = state_digest(bundle)
-    digest = sha256_text(json.dumps(rows, ensure_ascii=False, sort_keys=True))
+    digest = audit_digest(rows)
     text = "\n".join(
         ["Дескриптори зон Cairn: одна зона = один файл + один лок + один журнал.",
          f"Протокол: {PROTOCOL}. Коміт: {commit[:12] or '—'}.",

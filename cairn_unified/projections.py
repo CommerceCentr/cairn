@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from .canon import canonical
+from .canon import canonical, payload_hash
 from .db import has_fts
 
 
@@ -52,6 +52,30 @@ def _object(con, event, p):
             p.get("summary"), _j(p), p.get("trust_class", "source_observed"),
             p.get("valid_from"), p.get("valid_until"),
             p.get("recorded_at") or event["recorded_at"], p.get("updated_at") or event["recorded_at"],
+        ),
+    )
+    # Ревізія обʼєкта (v3 §18.1). Раніше минулий payload жив ЛИШЕ в журналі,
+    # тому `supersedes`/`superseded_by` і повний `as_of` будувати було ні на
+    # чому. Усі зміни обʼєкта йдуть через `object.upserted`, тож одного місця
+    # достатньо — другий шлях запису розійшовся б із першим.
+    revision = con.execute(
+        "SELECT COALESCE(MAX(revision), 0) + 1 AS n FROM object_revisions WHERE object_id = ?",
+        (p["id"],),
+    ).fetchone()["n"]
+    con.execute(
+        """INSERT OR REPLACE INTO object_revisions(
+            id, object_id, revision, payload_json, payload_hash,
+            valid_from, valid_until, recorded_at, source_event_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            f"{p['id']}:{revision}", p["id"], revision, _j(p),
+            payload_hash(p), p.get("valid_from"), p.get("valid_until"),
+            # ЧАС ТРАНЗАКЦІЇ береться з ПОДІЇ, не з payload: `recorded_at`
+            # усередині обʼєкта — це час його створення, він копіюється в
+            # кожну наступну редакцію й тому не впорядковує ревізії.
+            # Виміряно: дві ревізії мали однаковий штамп, і `as_of`
+            # віддавав теперішнє під виглядом минулого.
+            event["recorded_at"], event.get("event_id"),
         ),
     )
     index_text(con, p["id"], p.get("title") or "", " ".join(
@@ -185,7 +209,11 @@ def _code(con, event, p):
             "namespace": f"repo:{repo}",
             "stable_key": sym["stable_key"],
             "schema_version": "2.0",
-            "lifecycle_state": "current",
+            # Було "current" — значення FRESHNESS у полі життєвого циклу.
+            # Свіжість символа НЕ зберігається: context.py виводить її
+            # порівнянням revision, і друга копія того самого факту
+            # розходилася б із першою.
+            "lifecycle_state": "accepted",
             "title": sym["qualified_name"],
             "summary": sym["path"],
             "trust_class": "source_observed",

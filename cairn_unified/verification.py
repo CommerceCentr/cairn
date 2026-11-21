@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from . import code, merge, semantic
-from .canon import canonical, sha256_text
+from .canon import audit_digest, canonical, sha256_text
 from .code import git
 from .ontology import AUTHORITATIVE
 
@@ -53,8 +53,44 @@ def _contradictions(store, body: dict, object_id: str) -> list[str]:
     return sorted(found)
 
 
+def _db_path(sem: dict, override: str | None) -> str:
+    """Де лежить БД агента. У payload її більше немає — і правильно.
+
+    Порядок: явний параметр -> застаріле поле обʼєкта (сховища, створені до
+    цієї правки) -> `OPENCODE_DB`/домашня тека. Застаріле поле читаємо, але
+    НЕ пишемо: інакше воно б жило вічно.
+    """
+    if override:
+        return str(override)
+    legacy = str(sem.get("opencode_db") or "")
+    if legacy:
+        return legacy
+    try:
+        from adapters import opencode
+        return opencode.default_db()
+    except Exception:                             # noqa: BLE001 — немає адаптера
+        return ""
+
+
+def _source_failure(source: str, exc: BaseException, what: str) -> str:
+    """Причина, що розрізняє ДВІ різні речі під однією міткою.
+
+    Було: будь-яке виключення ставало `unresolved:*_source_unavailable`,
+    тобто зламаний верифікатор був невідрізненний від відсутнього джерела,
+    і обʼєкт ніколи не позначався ХИБНИМ — лише НЕПЕРЕВІРЕНИМ.
+
+    Якір — ЗМІСТ, а не тип виключення: відсутній файл БД дає
+    `sqlite3.OperationalError`, а не `FileNotFoundError`, тому вгадувати по
+    типу не можна. Питаємо диск: джерела немає -> `unresolved`; джерело є,
+    а читання впало -> `verifier_error`, бо це дефект перевірки.
+    """
+    if not source or not Path(source).exists():
+        return f"unresolved:{what}_source_missing"
+    return f"verifier_error:{what}_source_{type(exc).__name__}"
+
 def check_object(store, body: dict, *, repo_path: str | Path | None = None,
-                 packs_dir: str | Path | None = None) -> tuple[list[dict], list[str]]:
+                 packs_dir: str | Path | None = None,
+                 opencode_db: str | None = None) -> tuple[list[dict], list[str]]:
     """Повернути (пройдені перевірки, причини ескалації). Без записів."""
     sem = body.get("semantic") or {}
     checks: list[dict] = []
@@ -105,20 +141,18 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         # SHA коміту й не власний текст агента. Джерело читається з БД
         # адаптером у режимі mode=ro; НЕ з payload об’єкта, бо звірка самого
         # себе з собою була б тавтологією (виміряний клас помилок №13).
-        db_path = str(sem.get("opencode_db") or "")
+        db_path = _db_path(sem, opencode_db)
         msg_id = str(sem.get("compaction_message_id") or "")
         source = None
+        source_failure = ""
         if db_path and msg_id:
             try:
-                import sys
-                root = Path(__file__).resolve().parents[1]
-                if str(root) not in sys.path:
-                    sys.path.insert(0, str(root))
                 from adapters import opencode
                 source = opencode.compaction(db_path, str(sem.get("session_id") or "") or None,
                                              message_id=msg_id)
-            except Exception:
+            except Exception as exc:              # noqa: BLE001 — класифікуємо нижче
                 source = None
+                source_failure = _source_failure(db_path, exc, "session")
         if source is not None:
             if sha256_text(str(source.get("summary") or "")) == sem.get("summary_sha256"):
                 checks.append({"check": "session_summary_matches",
@@ -131,18 +165,14 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             else:
                 reasons.append("unresolved:session_keep_id_mismatch")
         else:
-            reasons.append("unresolved:session_source_unavailable")
+            reasons.append(source_failure or "unresolved:session_source_unavailable")
 
     if sem.get("kind") == "unresolved_mutations":
         # «Чому відкинуто» перевіряється тим самим класифікатором, що й
         # ребра: повторне читання opencode.db + поточний індекс вузлів.
         # Об'єкт не звіряється з власним текстом (тавтологія).
-        db_path = str(sem.get("opencode_db") or "")
+        db_path = _db_path(sem, opencode_db)
         try:
-            import sys
-            root = Path(__file__).resolve().parents[1]
-            if str(root) not in sys.path:
-                sys.path.insert(0, str(root))
             from adapters import opencode
             from . import compaction_link
             events = list(opencode.read(db_path, str(sem.get("session_id") or "") or None))
@@ -154,8 +184,8 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                                "value": str(len(recomputed))})
             else:
                 reasons.append("unresolved:unresolved_reasons_mismatch")
-        except Exception:
-            reasons.append("unresolved:unresolved_source_unavailable")
+        except Exception as exc:                  # noqa: BLE001 — класифікуємо
+            reasons.append(_source_failure(db_path, exc, "unresolved"))
 
     if sem.get("kind") == "zone_descriptors":
         # Дескриптор зони не звіряється з власним текстом. Перечитуємо файли
@@ -165,8 +195,7 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             from . import zones as zone_mod
             declared = [str(r.get("zone") or "") for r in (sem.get("zones") or [])]
             recomputed = zone_mod.snapshot(store, declared)
-            if sha256_text(json.dumps(recomputed, ensure_ascii=False, sort_keys=True)) \
-                    == sem.get("digest"):
+            if audit_digest(recomputed) == sem.get("digest"):
                 checks.append({"check": "zone_descriptors_match_files",
                                "value": str(len(recomputed))})
                 locks = {r["lock_file"] for r in recomputed}
@@ -205,22 +234,18 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                         reasons.append("unresolved:zone_bundle_mismatch")
             else:
                 reasons.append("unresolved:zone_descriptors_mismatch")
-        except Exception:
-            reasons.append("unresolved:zone_source_unavailable")
+        except Exception as exc:                  # noqa: BLE001 — класифікуємо
+            reasons.append(_source_failure(str(store.root), exc, "zone"))
 
     if sem.get("kind") == "auto_compaction":
         # Автокомактація не має права свідчити сама за себе: кожен намір
         # перечитується з opencode.db у mode=ro і звіряється за digest тексту.
         # Джерело — user-повідомлення, а не згенерований агентами текст.
-        db_path = str(sem.get("opencode_db") or "")
+        db_path = _db_path(sem, opencode_db)
         refs = sem.get("intent_refs") or []
         source_texts: dict[str, str] = {}
         if db_path:
             try:
-                import sys
-                root = Path(__file__).resolve().parents[1]
-                if str(root) not in sys.path:
-                    sys.path.insert(0, str(root))
                 from adapters import opencode
                 for rec in opencode.read(db_path,
                                          str(sem.get("session_id") or "") or None):
@@ -246,14 +271,10 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         # Перевіряємо три речі: намір у mode=ro БД агента, базову ревізію git
         # і наявність файлів, які справді змінено. Коміт НЕ вимагаємо —
         #Changes можуть бути нескоміченими, і це не має видаватися комітом.
-        db_path = str(sem.get("opencode_db") or "")
+        db_path = _db_path(sem, opencode_db)
         source_texts: dict[str, str] = {}
         if db_path:
             try:
-                import sys
-                root = Path(__file__).resolve().parents[1]
-                if str(root) not in sys.path:
-                    sys.path.insert(0, str(root))
                 from adapters import opencode
                 for rec in opencode.read(db_path,
                                          str(sem.get("session_id") or "") or None):
@@ -404,6 +425,7 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
 
 def verify_object(store, object_id: str, *, repo_path: str | Path | None = None,
                   packs_dir: str | Path | None = None,
+                  opencode_db: str | None = None,
                   actor: dict | None = None) -> dict:
     """Прийняти об'єкт за перевіркою або ескалувати як 'не встановлено'."""
     actor = actor or VERIFIER
@@ -417,7 +439,8 @@ def verify_object(store, object_id: str, *, repo_path: str | Path | None = None,
         return {"object_id": object_id, "verified": False, "reasons": ["unresolved:not_active"],
                 "checks": [], "escalated": False}
 
-    checks, reasons = check_object(store, body, repo_path=repo_path, packs_dir=packs_dir)
+    checks, reasons = check_object(store, body, repo_path=repo_path, packs_dir=packs_dir,
+                                 opencode_db=opencode_db)
     digest = sha256_text(canonical({"checks": checks, "reasons": reasons}))
 
     def op(con):
@@ -469,7 +492,8 @@ def verify_object(store, object_id: str, *, repo_path: str | Path | None = None,
 
 
 def verify_pending(store, work_id: str, *, repo_path: str | Path | None = None,
-                   packs_dir: str | Path | None = None) -> dict:
+                   packs_dir: str | Path | None = None,
+                   opencode_db: str | None = None) -> dict:
     """Верифікувати всі пропозиції задачі; повернути звіт для спостерігача."""
     rows = store.read(
         "SELECT o.id FROM objects o "
@@ -479,7 +503,8 @@ def verify_pending(store, work_id: str, *, repo_path: str | Path | None = None,
     report = {"work_id": work_id, "total": len(rows), "verified": [], "escalated": [],
               "checks": 0}
     for row in rows:
-        result = verify_object(store, row["id"], repo_path=repo_path, packs_dir=packs_dir)
+        result = verify_object(store, row["id"], repo_path=repo_path, packs_dir=packs_dir,
+                               opencode_db=opencode_db)
         if result["verified"]:
             report["verified"].append(row["id"])
         else:
@@ -490,5 +515,3 @@ def verify_pending(store, work_id: str, *, repo_path: str | Path | None = None,
     return report
 
 
-def _j(value) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)

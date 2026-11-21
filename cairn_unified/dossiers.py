@@ -198,5 +198,6 @@ def write_zone(repo: Path, zone: str, out_dir: Path, **kwargs) -> dict:
         stats.update({"path": str(path), "changed": False})
         return stats
     path.write_text(text, encoding="utf-8")
-    stats.update({"path": str(path), "changed": True or not existed})
+    stats.update({"path": str(path), # Було `True or not existed` — друга частина недосяжна.
+        "changed": True})
     return stats

@@ -59,11 +59,21 @@ def main() -> int:
 
         print("1. РЕЄСТР І КОНТРАКТ")
         catalog = mcp.tools_list()["tools"]
-        ok("11 інструментів", len(catalog) == 11, str(len(catalog)))
+        ok("12 інструментів", len(catalog) == 12, str(len(catalog)))
         expected = ("cairn_context", "cairn_work_next", "cairn_work_show", "cairn_work_update",
                     "cairn_semantic_query", "cairn_code_explore", "cairn_decision_propose",
                     "cairn_evidence_attach", "cairn_checkpoint", "cairn_handoff", "cairn_status")
-        ok("назви збігаються зі spec", tuple(t["name"] for t in catalog) == expected)
+        # Одинадцять назв зі §16.2 мусять бути НА МІСЦІ й точними. Розширення
+        # дозволене, але лише НАЗВАНЕ: інакше «збігається зі spec» означало б
+        # дві різні речі — «spec виконано» і «нічого не додано».
+        extensions = ("cairn_why",)
+        names = tuple(t["name"] for t in catalog)
+        ok("усі 11 назв зі spec на місці", set(expected) <= set(names),
+           str(sorted(set(expected) - set(names))))
+        ok("порядок назв зі spec збережено",
+           tuple(n for n in names if n in expected) == expected)
+        ok("розширення лише названі", set(names) - set(expected) == set(extensions),
+           str(sorted(set(names) - set(expected) - set(extensions))))
         ok("schemas валідні й компактні", all(
             t["inputSchema"]["type"] == "object" and t.get("description")
             and set(t["inputSchema"].get("required", [])) <= set(t["inputSchema"]["properties"])
@@ -169,7 +179,8 @@ def main() -> int:
         ok("initialize повертає capabilities", init["result"]["capabilities"]["tools"]["listChanged"] is False)
         ok("протокол echoed", init["result"]["protocolVersion"] == "cairn-test/1")
         catalog_rpc = mcp.handle_request(store, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, AGENT)
-        ok("tools/list через RPC", len(catalog_rpc["result"]["tools"]) == 11)
+        ok("tools/list через RPC віддає той самий каталог",
+           len(catalog_rpc["result"]["tools"]) == len(catalog))
         rpc = mcp.handle_request(store, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                          "params": {"name": "cairn_status", "arguments": {}}}, AGENT)
         payload = json.loads(rpc["result"]["content"][0]["text"])

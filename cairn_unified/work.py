@@ -6,7 +6,7 @@ import json
 
 from .canon import prefixed
 from .errors import CairnError
-from .ontology import CLAIMABLE, TERMINAL, TRANSITIONS
+from .ontology import CLAIMABLE, TERMINAL, TRANSITIONS, WORK_ITEM_TYPES
 from .semantic import relate
 from .store import require_human
 
@@ -16,6 +16,12 @@ def create_work(store, *, title: str, actor: dict, type: str = "task", descripti
                 labels: list | None = None, capabilities: list | None = None,
                 parent_id: str | None = None, budget_limit_chars: int | None = None,
                 idempotency_key: str | None = None, status: str = "open") -> dict:
+    if type not in WORK_ITEM_TYPES:
+        raise CairnError("bad_work_type", f"вид роботи {type} не в онтології",
+                         exit_code=2, details={"allowed": list(WORK_ITEM_TYPES)})
+    if status not in TRANSITIONS:
+        raise CairnError("bad_status", f"статус {status} не в онтології",
+                         exit_code=2, details={"allowed": sorted(TRANSITIONS)})
     now = store.now()
     wid = prefixed("wrk")
     payload = {
@@ -39,6 +45,46 @@ def create_work(store, *, title: str, actor: dict, type: str = "task", descripti
     def op(con):
         ev = store.append(con, "work.upserted", wid, payload, actor, idempotency_key)
         body = ev["payload"]
+        if not ev["replayed"]:
+            # WorkItem мусить бути в ТОМУ САМОМУ графі, що Decision, Symbol,
+            # Session і Evidence (v3 §4.2 називає WorkItem першим; §27 DoD
+            # вимагає один граф). Виміряно до цієї правки:
+            # `select count(*) from objects where object_type like 'work%'` = 0,
+            # тобто графа було два, і дійти від вузла коду до задачі одним
+            # обходом було неможливо.
+            # `work_items` лишається операційною проєкцією: статус, claim і
+            # ready-frontier читають її, а не цей envelope.
+            store.append(con, "object.upserted", wid, {
+                "id": wid,
+                "object_type": "work_item",
+                "namespace": f"project:{store.manifest()['project_id']}",
+                "stable_key": wid,
+                "schema_version": "2.0",
+                "lifecycle_state": "accepted",
+                "title": title,
+                "summary": description or title,
+                "trust_class": ("human_authoritative" if actor["kind"] == "human"
+                                else "agent_proposed"),
+                "valid_from": now,
+                "valid_until": None,
+                "observed_at": now,
+                "recorded_at": now,
+                "updated_at": now,
+                "supersedes": [],
+                "superseded_by": [],
+                "semantic": {
+                    "kind": "work_item",
+                    "work_type": type,
+                    "scope": sorted(str(v) for v in (scope or {}).values()
+                                    if isinstance(v, str)),
+                    "node_refs": [],
+                    "constraints": [str(a) for a in (acceptance or [])],
+                },
+                "provenance": {"created_by": actor, "recorded_at": now,
+                               "task_id": wid, "session_id": None,
+                               "commit_refs": [], "evidence_refs": []},
+                "access": {"classification": "internal"},
+            }, actor, f"work-envelope:{wid}")
         return {"work": body, "event_id": ev["event_id"], "replayed": ev["replayed"]}
 
     result = store.mutate(op)

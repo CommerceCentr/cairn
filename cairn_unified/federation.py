@@ -22,6 +22,35 @@ PROTECTED = frozenset({
 })
 
 
+def bundle_events(bundle: dict) -> list[dict]:
+    """Події bundle після перевірки ФОРМИ, до перевірки змісту.
+
+    Bundle приходить із файла, тобто це недовірені дані. `verify_events`
+    і `inspect` звертаються до `.get`/`["event_id"]`, тому не-обʼєкт або
+    подія без `event_id` давали `AttributeError`/`KeyError` — нетипізований
+    traceback замість відмови. Форму перевіряємо окремо й першою.
+    """
+    raw = bundle.get("events")
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise CairnError("bundle_malformed", "events мусить бути списком", exit_code=4,
+                         details={"got": type(raw).__name__})
+    problems: list[dict] = []
+    for index, event in enumerate(raw):
+        if not isinstance(event, dict):
+            problems.append({"index": index, "reason": "not_an_object",
+                             "got": type(event).__name__})
+            continue
+        for field in ("event_id", "event_type"):
+            if not isinstance(event.get(field), str) or not event.get(field):
+                problems.append({"index": index, "reason": f"missing_{field}"})
+    if problems:
+        raise CairnError("bundle_malformed", "подія бандла має неправильну форму",
+                         exit_code=4, details={"problems": problems[:20]})
+    return list(raw)
+
+
 def export_bundle(store, *, path: str | Path | None = None) -> dict:
     events = ledger.read_events(ledger.ledger_path(store.root))
     chain = ledger.verify(ledger.ledger_path(store.root))
@@ -54,7 +83,7 @@ def load_bundle(path: str | Path) -> dict:
 
 
 def inspect(store, bundle: dict) -> dict:
-    events = bundle.get("events") or []
+    events = bundle_events(bundle)
     local_rows = store.read(
         "SELECT event_id, aggregate_id, payload_hash, payload_json, causation_id FROM events"
     )
@@ -108,7 +137,15 @@ def import_bundle(store, bundle: dict, actor: dict, *, apply: bool = False) -> d
     require_human(actor)
     if bundle.get("format") != FORMAT:
         raise CairnError("bad_bundle", "формат бандла не підтримується", exit_code=2)
-    chain = ledger.verify_events(bundle.get("events") or [])
+    events = bundle_events(bundle)
+    # Виміряний дефект: тут не було перевірки digest, тому підмінений
+    # `digest` давав applied_count=1 і exit 0. `restore_bundle` і
+    # `merge._bundle_shape` її робили — import ні.
+    audit = verify_bundle(bundle)
+    if not audit["ok"]:
+        raise CairnError("bundle_digest_mismatch", "bundle не підтверджує власний вміст",
+                         exit_code=4, details={"problems": audit["problems"]})
+    chain = ledger.verify_events(events)
     if not chain["ok"]:
         raise CairnError("bundle_chain_corrupt", "ланцюжок бандла пошкоджено", exit_code=4,
                          details={"problems": chain["problems"]})
@@ -123,7 +160,7 @@ def import_bundle(store, bundle: dict, actor: dict, *, apply: bool = False) -> d
             exit_code=4, details={"conflicts": report["conflicts"]},
         )
 
-    by_id = {event["event_id"]: event for event in bundle.get("events") or []}
+    by_id = {event["event_id"]: event for event in events}
     applied = 0
 
     def op(con):

@@ -3,7 +3,8 @@
 
 **Версія документа:** 1.0  
 **Дата дослідження:** 19 листопада 2026 року  
-**Статус:** архітектурна специфікація для greenfield-розробки  
+**Статус:** архітектурна специфікація для greenfield-розробки (проєктний документ)  
+**Чинна реалізація:** описана в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); цей файл не є довідкою по API  
 **Робоча назва продукту:** Cairn Unified (далі — Cairn)  
 **Ціль розгортання:** local-first, повністю self-hosted, offline-capable  
 **Основні клієнти:** Claude Code, Codex, Cursor, Gemini CLI та інші coding agents через адаптери, CLI і MCP

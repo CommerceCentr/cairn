@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 SCHEMA_VERSION = "2.0"
-DB_SCHEMA_VERSION = 1
+#: 2 — додано `object_revisions` (v3 §18.1). Проєкція похідна від
+#: журналу, тому міграція = перебудова, а не ALTER: див. Store.open.
+DB_SCHEMA_VERSION = 2
 
 RELATION_REGISTRY: dict[str, dict] = {
     "depends_on": {"effect": "hard", "blocks": True},
@@ -62,6 +64,28 @@ TRANSITIONS: dict[str, set[str]] = {
     "archived": set(),
 }
 
+#: Життєвий цикл обʼєкта (v3 §4.2 / SEM-004). Досі цієї множини не існувало
+#: взагалі, тому поле було фактично вільним текстом, і в сховище потрапило
+#: значення `current` — воно належить FRESHNESS, а не життєвому циклу.
+LIFECYCLE_STATES = (
+    "proposed",
+    "accepted",
+    "rejected",
+    "superseded",
+    "revoked",
+    "stale",
+)
+
+#: Вид робочого елемента (v3 §6.1 `type`). Це НЕ `object_type`: обʼєкт має
+#: тип `work_item`, а його вид — один із цих. Додати новий вид означає
+#: додати його тут: у цьому й сенс контракту.
+WORK_ITEM_TYPES = (
+    "task",
+    "bug",
+    "epic",
+    "spike",
+)
+
 TRUST_CLASSES = (
     "human_authoritative",
     "verified_system",
@@ -94,6 +118,13 @@ GATE_TYPES = (
 )
 
 DEFAULTS = {
+    #: Переноси шляхів у вигляді "старий/префікс/->новий/префікс/". Потрібні,
+    #: коли коміти й події зберегли стару розкладку, а файли вже переїхали.
+    #: Було прошито в коді як `src/cairn_unified/` -> корінь, тобто правило
+    #: ОДНОГО репозиторію жило в загальному модулі.
+    "path_rewrites": ["src/cairn_unified/->cairn_unified/"],
+    #: Автор комітів, які створює воркер. Було прошито в `code/git.py`.
+    "git_author": "Cairn Worker <worker@cairn.local>",
     "budget_chars": 8000,
     "lease_ttl_sec": 3600,
     "command_allowlist": ["python", "php", "git"],

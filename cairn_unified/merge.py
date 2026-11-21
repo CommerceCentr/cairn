@@ -16,11 +16,12 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 from pathlib import Path
 
 from . import code, federation, ledger, zones
-from .canon import canonical, sha256_text
+from .canon import audit_digest, canonical, sha256_text
 from .errors import CairnError
 from .store import require_human
 
@@ -48,11 +49,22 @@ def collect_commits(node, out: set[str] | None = None) -> set[str]:
     return out
 
 
-def _git_resolve(repo_path, value: str) -> str:
+#: Причина, через яку хеш не резолвився. Порожній рядок означав обидві
+#: різні речі: «такого коміта немає» і «git не запустився». Друге — дефект
+#: середовища, і мовчки трактувати його як фальшивий хеш не можна.
+GIT_UNAVAILABLE = "git_unavailable"
+
+
+def _git_resolve(repo_path, value: str) -> tuple[str, str]:
+    """(повний sha, причина). Причина порожня, якщо git відповів нормально."""
     try:
-        return code.git.git(repo_path, "rev-parse", f"{value}^{{commit}}").strip()
-    except Exception:
-        return ""
+        return code.git.git(repo_path, "rev-parse", f"{value}^{{commit}}").strip(), ""
+    except CairnError as exc:
+        if exc.code == "git_failed":
+            return "", "commit_not_found"
+        return "", GIT_UNAVAILABLE
+    except OSError:
+        return "", GIT_UNAVAILABLE
 
 
 def _bundle_shape(bundle: dict) -> tuple[str, list[str]]:
@@ -63,7 +75,7 @@ def _bundle_shape(bundle: dict) -> tuple[str, list[str]]:
         return "", problems
     audit = dict(bundle)
     digest = str(audit.pop("digest", ""))
-    if sha256_text(json.dumps(audit, ensure_ascii=False, sort_keys=True)) != digest:
+    if audit_digest(audit) != digest:
         problems.append("bad_digest")
     fed = bundle.get("cairn_bundle") or {}
     checked = federation.verify_bundle(fed)
@@ -112,10 +124,16 @@ def inspect_merge(store, bundle: dict, *, repo_path: str | Path) -> dict:
 
     links = []
     for value in sorted(collect_commits(bundle)):
-        full = _git_resolve(repo_path, value)
-        links.append({"requested": value, "resolved": full,
-                      "in_repo": bool(full), "full": full[:12] if full else ""})
+        full, failure = _git_resolve(repo_path, value)
+        links.append({"requested": value, "resolved": full, "in_repo": bool(full),
+                      "full": full[:12] if full else "", "failure": failure})
     unlinked = [item["requested"] for item in links if not item["in_repo"]]
+    # «git не запустився» — не той самий факт, що «такого коміта немає».
+    # Перше означає, що звіт неповний, і це мусить бути видно окремо.
+    git_unavailable = [item["requested"] for item in links
+                       if item["failure"] == GIT_UNAVAILABLE]
+    if git_unavailable:
+        shape_problems.append("git_unavailable")
 
     fed = bundle.get("cairn_bundle") or {}
     fed_report = federation.inspect(store, fed)
@@ -166,7 +184,7 @@ def inspect_merge(store, bundle: dict, *, repo_path: str | Path) -> dict:
                               "incoming": sha256_text(canonical(d.get("context_identity")))[:12]})
         owner = str(local.get("owner") or "")
         expires = int(local.get("lease_expires_ms") or 0)
-        if owner and expires > int(__import__("time").time() * 1000):
+        if owner and expires > int(time.time() * 1000):
             conflicts.append({"kind": "zone_lease_active", "zone": zone, "owner": owner})
 
     return {
@@ -181,6 +199,7 @@ def inspect_merge(store, bundle: dict, *, repo_path: str | Path) -> dict:
         "causal_digest": fed.get("digest"),
         "commit_links": links,
         "unlinked_commits": unlinked,
+        "git_unavailable": git_unavailable,
         "new_events": len(fed_report.get("new") or []),
         "duplicate_events": len(fed_report.get("duplicates") or []),
         "zone_journal_plan": {z: len(rows) for z, rows in journal.items()},
@@ -199,9 +218,6 @@ def merge_bundle(store, bundle: dict, *, repo_path: str | Path,
     require_human(actor)
     if report["status"] == "refused":
         raise CairnError("merge_refused", "bundle не належить цьому репозиторію або пошкоджений",
-                         exit_code=4, details={"problems": report["problems"]})
-    if report.get("shape_problems"):
-        raise CairnError("merge_invalid", "bundle не проходить перевірку цілісності",
                          exit_code=4, details={"problems": report["problems"]})
 
     fed = bundle.get("cairn_bundle") or {}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from pathlib import Path
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -33,12 +34,46 @@ def canonical(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def write_json_atomic(path, value, *, indent: int = 2) -> None:
+    """Записати JSON через tmp + `os.replace`.
+
+    Обрив звичайного `write_text` лишає півфайла. Для `manifest.json` це
+    фатально: `Store.open` вважає його доказом існування проєкту, тож
+    порваний запис робить сховище неоткриваним. `os.replace` атомарний на
+    Windows і POSIX.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                              indent=indent) + "\n",
+                   encoding="utf-8", newline="\n")
+    os.replace(tmp, target)
+
+
+def audit_text(value) -> str:
+    """Серіалізація для digest аудиту зон і merge.
+
+    Типові розділювачі — НЕ випадковість: саме в цій формі обчислені всі
+    наявні digest-и дескрипторів, журналів і bundle зон. Зміна форми
+    знецінила б їх, тому форма зафіксована тут і більше ніде не
+    повторюється.
+
+    Для подій і bundle федерації діє `canonical()` (компактна форма). Це
+    два РІЗНІ домени: їхні значення лежать поруч і не порівнюються.
+    """
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def audit_digest(value) -> str:
+    """sha256 від `audit_text`. Без префікса — як у наявних даних."""
+    return sha256_text(audit_text(value))
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def payload_hash(payload: dict) -> str:
@@ -60,9 +95,6 @@ def uuid7() -> str:
     return str(uuid.UUID(bytes=bytes(raw)))
 
 
-def stable_id(prefix: str, *parts: str) -> str:
-    digest = sha256_text("\n".join(parts))[:26]
-    return f"{prefix}_{digest}"
 
 
 def prefixed(prefix: str) -> str:

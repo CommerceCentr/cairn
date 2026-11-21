@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..canon import sha256_text
 from ..errors import CairnError
+from ..ontology import DEFAULTS
 from ..redact import redact_text
 
 READ_ONLY = frozenset({
@@ -131,14 +132,21 @@ def worktree_remove(repo, dest, branch: str | None = None) -> None:
             raise CairnError("git_branch_delete_failed", "не вдалося видалити гілку", details={"stderr": detail})
 
 
-def commit(repo, message: str, paths: list[str]) -> dict:
+def commit(repo, message: str, paths: list[str], *, author: str | None = None) -> dict:
+    """Коміт воркера. Автор приходить параметром або з конфігу `git_author`.
+
+    Було прошито `Cairn Worker <worker@cairn.local>` — чуже імʼя в історії
+    чужого репозиторію, і змінити його було нічим.
+    """
     if not paths:
         raise CairnError("nothing_to_commit", "немає файлів для коміту", exit_code=2)
+    who = author or DEFAULTS["git_author"]
+    name, _, mail = who.partition("<")
     git(repo, "add", "--", *paths)
     git(
         repo,
-        "-c", "user.name=Cairn Worker",
-        "-c", "user.email=worker@cairn.local",
+        "-c", f"user.name={name.strip() or 'Cairn Worker'}",
+        "-c", f"user.email={mail.strip().rstrip('>') or 'worker@cairn.local'}",
         "commit", "-m", message,
     )
     sha = head(repo)

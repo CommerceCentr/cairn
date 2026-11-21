@@ -177,6 +177,22 @@ def build_parser() -> argparse.ArgumentParser:
     cr2.add_argument("path")
     cr2.add_argument("target")
 
+    g, c = group("why")
+    cw = c.add_parser("node")
+    cw.add_argument("path")
+    cw.add_argument("--repo-id", default=None,
+                    help="типово — тотожність репозиторію в --repo-path")
+    cw.add_argument("--repo-path", default=".")
+    cw.add_argument("--line", type=int, default=None)
+    cw.add_argument("--address", default=None)
+    cw.add_argument("--commit", default=None)
+    cw.add_argument("--as-of", dest="as_of", default=None)
+    cw.add_argument("--budget", type=int, default=None, help="символів, не токенів")
+    cw.add_argument("--no-chronology", dest="chronology", action="store_false")
+    cw.add_argument("--intent-text", dest="intent_text", action="store_true",
+                    help="дочитати текст намірів із джерела, звіривши sha256")
+    cw.add_argument("--opencode-db", dest="opencode_db", default=None)
+
     g, c = group("mcp")
     c.add_parser("tools")
     c.add_parser("serve")
@@ -397,6 +413,16 @@ def dispatch(args, actor: dict):
         bundle = federation.load_bundle(args.path)
         return federation.import_bundle(store, bundle, actor, apply=args.apply)
 
+    if group == "why" and cmd == "node":
+        from . import code as code_mod, why as why_mod
+        repo_id = args.repo_id or code_mod.git.identity(args.repo_path)["id"]
+        return why_mod.answer(
+            store, repo_id=repo_id, path=args.path, line=args.line,
+            address=args.address, commit=args.commit, as_of=args.as_of,
+            budget_chars=args.budget, chronology=args.chronology,
+            intent_text=args.intent_text, opencode_db=args.opencode_db,
+        )
+
     if group == "mcp":
         from . import mcp
         if cmd == "tools":
@@ -418,8 +444,11 @@ def main(argv: list[str] | None = None) -> int:
     except CairnError as exc:
         _emit({"error": exc.code, "message": exc.message, "details": exc.details}, args.compact)
         return exc.exit_code
-    except (json.JSONDecodeError, OSError, ValueError) as exc:
-        _emit({"error": "bad_input", "message": str(exc)}, args.compact)
+    except (json.JSONDecodeError, OSError, ValueError, LookupError, TypeError) as exc:
+        # LookupError/TypeError: дані з файла (bundle, --*-json) можуть не мати
+        # очікуваного ключа або типу. Без них виходив сирий traceback замість
+        # документованого JSON-конверта помилки.
+        _emit({"error": "bad_input", "message": f"{type(exc).__name__}: {exc}"}, args.compact)
         return 2
     _emit(result, args.compact)
     return 0

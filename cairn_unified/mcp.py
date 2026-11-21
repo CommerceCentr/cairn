@@ -56,6 +56,14 @@ TOOLS = [
          "symbol": {"type": "string"}, "work_id": {"type": "string"},
          "repo_id": {"type": "string"},
      }, [])},
+    {"name": "cairn_why",
+     "description": "Коли і чому редагувався вузол: причинна хронологія, походження, довіра, межі.",
+     "inputSchema": _schema({
+         "path": {"type": "string"}, "repo_id": {"type": "string"},
+         "address": {"type": "string"}, "line": {"type": "integer"},
+         "commit": {"type": "string"}, "as_of": {"type": "string"},
+         "budget": {"type": "integer"}, "intent_text": {"type": "boolean"},
+     }, ["path", "repo_id"])},
     {"name": "cairn_decision_propose", "description": "Пропонує рішення; ніколи його не затверджує.",
      "inputSchema": _schema({
          "title": {"type": "string"}, "summary": {"type": "string"},
@@ -224,6 +232,36 @@ def call_tool(store, name: str, arguments: dict | None, actor: dict | None = Non
         }
         return _result(store, data, subjects=[row["id"] for row in found["objects"][:limit]],
                        trust="source_observed")
+
+    if name == "cairn_why":
+        from . import why as why_mod
+
+        package = why_mod.answer(
+            store, repo_id=args["repo_id"], path=args["path"],
+            line=args.get("line"), address=args.get("address"),
+            commit=args.get("commit"), as_of=args.get("as_of"),
+            budget_chars=args.get("budget"),
+            intent_text=args.get("intent_text", False),
+        )
+        # Довіра не усереднюється в одне число: конверт несе клас кожного
+        # елемента, а найнижчий з них стає класом усієї відповіді.
+        classes = [item.get("trust_class") for item in package["trust"]]             if isinstance(package["trust"], list) else []
+        lowest = "source_observed"
+        for candidate in ("rejected_or_revoked", "imported_untrusted", "agent_inferred",
+                          "agent_proposed", "source_observed", "verified_system",
+                          "human_authoritative"):
+            if candidate in classes:
+                lowest = candidate
+                break
+        return {
+            "tool_result": "cairn/1",
+            "envelope": _envelope(
+                store, subjects=[package["node"]["stable_key"]], trust=lowest,
+                refs=[package["node"]["address"]],
+                note=package["boundary"],
+            ),
+            "data": package,
+        }
 
     if name == "cairn_code_explore":
         if args.get("symbol"):

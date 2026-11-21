@@ -9,8 +9,8 @@ import sqlite3
 from pathlib import Path
 
 from . import ledger, projections
-from .canon import canonical, iso, payload_hash, prefixed, utcnow
-from .db import connect, ensure
+from .canon import canonical, iso, payload_hash, prefixed, utcnow, write_json_atomic
+from .db import connect, ensure, set_version as db_set_version, stored_version as db_stored_version
 from .errors import CairnError
 from .ledger import chain_hash
 from .ontology import DB_SCHEMA_VERSION, DEFAULTS, SCHEMA_VERSION
@@ -22,6 +22,11 @@ INIT_FOLDERS = (
     "cache", "runtime", "secrets", "runtime/locks", "runtime/sessions",
     "runtime/worktrees", "runtime/checkpoints",
 )
+
+
+#: Шляхи, для яких DDL уже прогнано в цьому процесі. Процес живе один
+#: виклик CLI, тож кеш не застаріває; `rebuild`/`migrate` його скидають.
+_ENSURED: set[str] = set()
 
 
 class Store:
@@ -43,6 +48,7 @@ class Store:
         store = cls(root)
         if not (store.cairn / "manifest.json").exists():
             raise CairnError("not_initialized", "немає .cairn/manifest.json — спочатку project init", exit_code=2)
+        store.migrate()
         store.reconcile()
         return store
 
@@ -72,7 +78,7 @@ class Store:
             "replica_id": replica_id,
             "created_at": created,
         }
-        path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        write_json_atomic(path, body)
         (self.cairn / "config" / "project.json").write_text("{}\n", encoding="utf-8", newline="\n")
         self.mutate(lambda con: self.append(con, "replica.created", replica_id, {
             "id": replica_id,
@@ -84,9 +90,57 @@ class Store:
         return {"replayed": False, **body}
 
     def connect(self) -> sqlite3.Connection:
+        """Зʼєднання. DDL проганяється ОДИН раз на шлях у цьому процесі.
+
+        Було: `ensure()` на кожному виклику, а `read()` відкриває нове
+        зʼєднання на кожен запит — тобто кожне читання проганяло весь
+        `executescript(SCHEMA)` і `CREATE VIRTUAL TABLE` проти WAL-бази.
+        Це і ціна на гарячому шляху, і зайва DDL-конкуренція.
+        """
         con = connect(self.db_path)
-        ensure(con, self.now())
+        key = str(self.db_path)
+        if key not in _ENSURED:
+            self._last_stored_version = ensure(con, self.now())
+            _ENSURED.add(key)
         return con
+
+    def schema_state(self) -> dict:
+        """Версія схеми в базі й у читачі. Відкриває власне зʼєднання."""
+        con = connect(self.db_path)
+        try:
+            return {"stored": db_stored_version(con), "reader": DB_SCHEMA_VERSION}
+        finally:
+            con.close()
+
+    def migrate(self) -> dict:
+        """Forward-only міграція проєкції: резервна копія -> перебудова.
+
+        SQLite тут — ПРОЄКЦІЯ журналу, не джерело істини, тому коректна
+        міграція це не ALTER, а відтворення з `ledger.jsonl`. Жодного
+        рукописного ALTER немає й не мусить бути: вони додають другий шлях
+        отримання тих самих даних, який ніхто не перевіряє.
+        """
+        state = self.schema_state()
+        stored, reader = state["stored"], state["reader"]
+        if stored is None or stored >= reader:
+            return {"migrated": False, **state}
+        backup = None
+        if self.db_path.exists():
+            backup = self.db_path.with_suffix(f".v{stored}.bak")
+            shutil.copy2(self.db_path, backup)
+        _ENSURED.discard(str(self.db_path))
+        self.rebuild()
+        con = self.connect()
+        try:
+            db_set_version(con, reader, self.now())
+            integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            con.close()
+        if integrity != "ok":
+            raise CairnError("migration_integrity", f"integrity_check: {integrity}",
+                             exit_code=4, details={"backup": str(backup) if backup else None})
+        return {"migrated": True, "from": stored, "to": reader,
+                "backup": str(backup) if backup else None, "integrity": integrity}
 
     def mutate(self, fn):
         con = self.connect()
@@ -218,6 +272,7 @@ class Store:
 
     def rebuild(self) -> dict:
         """Видаляє проєкцію і відтворює її з журналу."""
+        _ENSURED.discard(str(self.db_path))
         for suffix in ("", "-wal", "-shm"):
             path = Path(str(self.db_path) + suffix)
             if path.exists():

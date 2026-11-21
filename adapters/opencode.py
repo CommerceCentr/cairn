@@ -55,7 +55,11 @@ def default_db() -> str:
 def connect(db_path: str | None = None):
     """Тільки `mode=ro`: адаптер не має права писати в журнал агента."""
     path = db_path or default_db()
-    return sqlite3.connect("file:" + path + "?mode=ro", uri=True)
+    con = sqlite3.connect("file:" + path + "?mode=ro", uri=True, timeout=5)
+    # БД пише живий агент у WAL. Без таймауту читач падає на блокуванні
+    # замість того, щоб почекати.
+    con.execute("PRAGMA busy_timeout=5000")
+    return con
 
 
 def _reasoning_of(data: dict) -> str:

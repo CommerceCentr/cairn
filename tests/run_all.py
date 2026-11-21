@@ -32,6 +32,17 @@ SCRIPTS = (
     "verify_was_rationale.py",
     "verify_auto_gate.py",
     "verify_causal_history.py",
+    # Були поза воротами, хоч і проходили: 31+5 тверджень не перевірялися
+    # ніколи. Виміряно наслідок — `verify_compaction_link` не спіймав зміну
+    # контракту причин, бо його не запускали.
+    "verify_compaction_link.py",
+    "verify_adapter_crud.py",
+    # Нові ворота: підроблений bundle і приватність шляхів.
+    "verify_bundle_tamper.py",
+    "verify_why.py",
+    "verify_privacy_paths.py",
+    # Непереносний: пропускається з названою причиною, не падає беззвучно.
+    "verify_auto_dossier.py",
     "benchmark_unified.py",
 )
 
@@ -48,9 +59,12 @@ def run(script: str) -> bool:
     proc = subprocess.run([sys.executable, str(TESTS / script)], cwd=str(ROOT),
                           env=env(), capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
-    lines = [line for line in proc.stdout.splitlines() if "ВЕРДИКТ" in line or "FAIL" in line]
+    lines = [line for line in proc.stdout.splitlines()
+             if "ВЕРДИКТ" in line or "FAIL" in line or line.startswith("SKIP")]
     verdict = lines[-1] if lines else (proc.stderr.strip().splitlines() or ["<без виводу>"])[-1]
-    flag = "ok  " if proc.returncode == 0 else "FAIL"
+    skipped = verdict.startswith("SKIP")
+    flag = "SKIP" if skipped and proc.returncode == 0 else (
+        "ok  " if proc.returncode == 0 else "FAIL")
     print(f"  {flag} {script:32} exit={proc.returncode} | {verdict[:110]}")
     if proc.returncode != 0:
         for line in proc.stdout.splitlines()[-6:]:
@@ -88,7 +102,9 @@ def cli_smoke() -> bool:
             healthy = json.loads(doctor.stdout)["ok"]
         except (ValueError, KeyError):
             count, healthy = -1, False
-        good = init.returncode == 0 and count == 11 and doctor.returncode == 0 and healthy is True
+        # 12, не 11: додано `cairn_why`. Число тут навмисно жорстке — інакше
+        # випадкова втрата інструмента пройшла б непоміченою.
+        good = init.returncode == 0 and count == 12 and doctor.returncode == 0 and healthy is True
         detail = f"init={init.returncode} tools={count} doctor_ok={healthy}"
         print(f"  {'ok  ' if good else 'FAIL'} {'cli smoke':32} | {detail}")
         return good

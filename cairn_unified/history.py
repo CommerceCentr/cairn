@@ -171,6 +171,20 @@ def import_compactions(store, repo_id: str, work_id: str, symbol: str, path: str
             for entry in entries:
                 try:
                     full = git.git(repo["path"], "rev-parse", f"{entry['sha']}^{{commit}}").strip()
+                    # Обʼєкти того самого коміту. `full` різний на кожен
+                    # запис досьє, тому запит лишається на запис — але
+                    # тепер він ФІЛЬТРОВАНИЙ, а не читає таблицю цілком
+                    # і не розбирає JSON усіх обʼєктів. LIKE звужує, а
+                    # точну рівність перевіряє наступний рядок: підрядок
+                    # не розрізняє поле від вмісту.
+                    same_commit = [
+                        {"id": row["id"], "body": json.loads(row["payload_json"])}
+                        for row in store.read(
+                            "SELECT id, payload_json FROM objects WHERE payload_json LIKE ?",
+                            (f'%"commit": "{full}"%',))
+                    ]
+                    same_commit = [item for item in same_commit
+                                   if (item["body"].get("semantic") or {}).get("commit") == full]
                 except CairnError:
                     continue
                 if not full:
@@ -203,14 +217,18 @@ def import_compactions(store, repo_id: str, work_id: str, symbol: str, path: str
                     relation="governed_by", actor=actor,
                     idempotency_key=f"cmp-governed:{key}:{work_id}",
                 )
-                for fact in store.read("SELECT id, payload_json FROM objects"):
+                # Було: `SELECT id, payload_json FROM objects` без умови —
+                # уся таблиця плюс розбір JSON кожного обʼєкта, на кожен
+                # запис досьє. Тепер фільтрований набір, зібраний вище.
+                for fact in same_commit:
                     if fact["id"] == result["object"]["id"]:
                         continue
-                    body = json.loads(fact["payload_json"])
+                    body = fact["body"]
                     sem = body.get("semantic") or {}
                     if sem.get("kind") == "compaction":
                         continue
-                    if sem.get("commit") != full or symbol not in (sem.get("scope") or []):
+                    if symbol not in (sem.get("scope") or []) \
+                            and symbol not in (sem.get("node_refs") or []):
                         continue
                     relation = semantic.relate(
                         store, from_id=result["object"]["id"], to_id=fact["id"],

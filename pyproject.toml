@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cairn-unified"
+version = "2.0.0"
+description = "Local semantic operating layer for people and AI agents: event ledger, trust graph, causal history"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+# Залежностей немає, і це властивість, не недогляд: сховище мусить
+# відкриватися на машині без мережі й без pip.
+dependencies = []
+keywords = ["agents", "provenance", "event-ledger", "context", "mcp"]
+classifiers = [
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/CommerceCentr/cairn"
+
+[project.scripts]
+# README у двох мовах і docs/ARCHITECTURE.md подавали `cairn2` як команду,
+# хоча вона існувала лише як `argparse(prog=...)`. Тепер це справді команда.
+cairn2 = "cairn_unified.cli:main"
+
+[tool.setuptools]
+# `adapters` — повноцінний пакет, а не сусідня тека: `verification.py`
+# робив `sys.path.insert` у чотирьох місцях, щоб дістати `adapters.opencode`,
+# тобто модуль ВСЕРЕДИНІ пакета тягнувся ЗА його межі. Через це
+# `cairn_unified` неможливо було встановити й вендорити.
+packages = ["cairn_unified", "cairn_unified.code", "adapters"]
+
+[tool.setuptools.package-data]
+adapters = ["php-parser/*.php"]

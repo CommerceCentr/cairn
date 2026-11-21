@@ -174,8 +174,25 @@ def main() -> int:
         bad = json.loads(json.dumps(_object(store, objects[0])))
         bad["semantic"]["opencode_db"] = r"Z:\no-such-db.sqlite"
         bad_res = verification.check_object(store, bad, repo_path=repo)
-        checks.append(("хибне джерело ескалує",
-                       any("session_source_unavailable" in r for r in bad_res[1])))
+        # Контракт став точнішим: «джерела немає» (unresolved) окремо від
+        # «перевірка впала» (verifier_error). Тут файла немає -> unresolved.
+        checks.append(("хибне джерело ескалує як unresolved",
+                       any(r == "unresolved:session_source_missing" for r in bad_res[1])
+                       and not any(r.startswith("verifier_error") for r in bad_res[1])))
+
+        # Реверс другого боку тієї самої межі: джерело ІСНУЄ, але це не БД.
+        # Мусить бути verifier_error (дефект перевірки), а не unresolved
+        # (відсутнє джерело) — інакше дві причини знову під однією міткою.
+        notdb = temp / "not-a-database.bin"
+        notdb.write_bytes(b"this is not sqlite")
+        broken = json.loads(json.dumps(_object(store, objects[0])))
+        broken["semantic"]["opencode_db"] = str(notdb)
+        broken_res = verification.check_object(store, broken, repo_path=repo)
+        checks.append(("наявне, але нечитне джерело -> verifier_error",
+                       any(r.startswith("verifier_error:session_source_")
+                           for r in broken_res[1])
+                       and not any(r == "unresolved:session_source_missing"
+                                   for r in broken_res[1])))
 
         # Реверс: підміна причини відкидання не проходить перевірку.
         bad_u = json.loads(json.dumps(_object(store, objects[1])))

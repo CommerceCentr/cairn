@@ -1,8 +1,16 @@
 name: unified-v2
 
 # Локальний, офлайн-конвеєр: жодного хмарного API, жодного real LLM.
-# Скрипти є самостійними (pytest у проєкті немає), тож CI просто викликає
-# єдиний runner, який повертає глобальний exit code.
+# Скрипти є самостійними (pytest у проєкті немає), тож CI викликає єдиний
+# runner, який повертає глобальний exit code.
+#
+# Чому матриця. Раніше тут був один job на ubuntu з Python 3.11, і при цьому
+# у `tests/run_all.py` стояли два тести, що зверталися до приватного диска
+# автора. Перевірено прогоном із підміненим шляхом: вони давали exit 1, а не
+# пропуск, тобто ворота на чужій машині зеленими бути НЕ МОГЛИ. Тести
+# переведено на тимчасові фікстури, а матриця тепер перевіряє те, на чому
+# код справді працює: Windows-гілку локів (`msvcrt` у zones.py) і версію
+# Python, на якій ведеться розробка.
 on:
   push:
     branches: [main, master]
@@ -10,17 +18,30 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # 3.11 — нижня підтримувана межа; 3.14 — версія розробки.
+        # Якщо runner не дає 3.14, цей job упаде з явною причиною, і межу
+        # треба змінити тут, а не замовчувати.
+        python-version: ["3.11", "3.14"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      # Індексація коду вимагає PHP CLI (code/php.py:86). Без нього
+          python-version: ${{ matrix.python-version }}
+      # Індексація коду вимагає PHP CLI (cairn_unified/code/php.py). Без нього
       # test_unified_vs01.py падає з php_unavailable — тож ставимо явно.
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.4"
           tools: none
+      - name: Syntax check
+        run: python -m compileall -q cairn_unified adapters tests tools
       - name: Run all Unified checks
         run: python tests/run_all.py
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONDONTWRITEBYTECODE: "1"
