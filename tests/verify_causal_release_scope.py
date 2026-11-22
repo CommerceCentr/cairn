@@ -44,7 +44,10 @@ def main() -> int:
     assert overview["commit_history"][0]["deleted_lines"] == 1
     assert overview["intent_catalog"] == catalog
     assert overview["trust"]["classes"] == ["agent_proposed"]
+    assert overview["why_detail"][0]["semantic_cause_status"] == "not_established"
+    assert "не встановлено" in overview["why_detail"][0]["note"]
     assert any(item["kind"] == "compact_view" for item in overview["omissions"])
+    assert "не кількість доведених причин" in overview["omissions"][-1]["reason"]
     folded = why._fold_chronology([
         {"object_id": "fact", "relation": "mutated", "direction": "to_node", "count": 2},
         {"object_id": "fact", "relation": "mutated", "direction": "to_node", "count": 3},

@@ -1101,7 +1101,13 @@ def _compact_answer(body: dict) -> dict:
         if key not in unique:
             unique[key] = {k: item.get(k) for k in
                            ("kind", "intent_ref", "motive", "motive_source",
-                            "evidence_level", "text") if item.get(k)}
+                            "evidence_level", "text", "note", "event_id", "ts")
+                           if item.get(k)}
+            unique[key]["semantic_cause_status"] = (
+                "agent_proposed" if item.get("motive") else "not_established")
+            if not item.get("motive"):
+                unique[key]["note"] = (
+                    "Намір є контекстом сесії; семантичну причину правки не встановлено")
             unique[key]["occurrences"] = 0
         unique[key]["occurrences"] += 1
     out["why_detail"] = list(unique.values())[:8]
@@ -1115,7 +1121,8 @@ def _compact_answer(body: dict) -> dict:
     out["omissions"] = [*body.get("omissions", []), {
         "kind": "compact_view", "object_id": None,
         "reason": (f"показано {len(out['why_detail'])} із {len(unique)} різних "
-                   "пояснень; повні докази й вилучені рядки: --full"),
+                   "контекстів правок; це не кількість доведених причин; "
+                   "повні докази й вилучені рядки: --full"),
     }]
     return out
 
