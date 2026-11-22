@@ -61,7 +61,7 @@
 | `redact.py`, `errors.py`, `canon.py` | секрети, стабільні коди помилок, канонізація |
 | `why.py` | `answer()` — коли і чому редагувався вузол: хронологія, походження, довіра, межі |
 | `adapters/normalize.py` (у пакеті) | збирач: сирі записи журналів -> канонічна форма + матриця можливостей |
-| `mcp.py`, `cli.py` | 12 MCP-інструментів і CLI `cairn2` (встановлюваний: `pyproject.toml`) |
+| `mcp.py`, `cli.py` | 13 MCP-інструментів і CLI `cairn2` (встановлюваний: `pyproject.toml`) |
 
 Адаптери — ПІДПАКЕТ `cairn_unified/adapters/`: `opencode.py`,
 `claude_code.py`, `codex.py`, `normalize.py`, три `_probe_*` (навмисні
@@ -184,7 +184,7 @@ rejected_or_revoked   відхилено/відкликано
 ## 8. Інтерфейс
 
 ```bash
-python -m cairn_unified mcp tools              # 12 інструментів
+python -m cairn_unified mcp tools              # 13 інструментів
 python -m cairn_unified --root <path> project init
 python -m cairn_unified --root <path> project doctor
 python -m cairn_unified --root <path> project rebuild

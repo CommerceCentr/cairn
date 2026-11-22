@@ -102,17 +102,31 @@ Use these names in the commands below:
    ```
 
    The default response is a compact overview of commits, reasons, and evidence limits.
-   Add `--full` for complete edits, deleted lines, and provenance.
+   The compact `answer` already shows some deleted lines. Add `--full`
+   for every deleted line in structured `patches` and evidence provenance.
 
-2. **After a completed edit, commit, or session compaction**, sync from
-   `<CAIRN>`. Initialize the store once if needed. Add each available
-   worktree as another `--source-repo`; omit it if there is only one.
+2. **After an edit in the current session**, record one short reason per
+   related file set. Use CLI `change note` or MCP `cairn_change_note`; Cairn
+   stores the text in `.cairn`. The journal indexer separately captures
+   structured edits. Stash or discard does not confirm these candidates.
+   **After a commit**, run the full sync. Only an exact, unambiguous Git
+   blob match admits the reason to node history.
+   Add each available worktree as another `--source-repo`.
 
    ```text
    python -m cairn_unified --root <ROOT> project init
    python -m cairn_unified --root <ROOT> repo add <REPO>
+   python -m cairn_unified --root <ROOT> --actor agent:<AGENT> change note --repo-path <REPO> --path <relative/path> --why "<why>" --intent "<intent>"
+   python tools/index_agent_history.py --root <ROOT> --repo <REPO> --apply
    python tools/sync_project_causality.py --root <ROOT> --repo <REPO> --source-repo <REPO> --bundle <BUNDLE>
    ```
+
+   Record the note **after the edit and before the commit**. A later edit
+   to the same file needs a new note. Multiple reasons for one exact file
+   state remain ambiguous rather than being assigned at random.
+
+   `why node` shows confirmed history; `--include-pending --full`
+   separately exposes all candidates without a proven commit link.
 
 3. **Check what was proved.** A Git-only commit still changed the file, but
    no agent edit has been tied to it. Do not invent a missing session or

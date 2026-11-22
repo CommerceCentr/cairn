@@ -44,6 +44,7 @@ SCRIPTS = (
     "verify_bundle_tamper.py",
     "verify_why.py",
     "verify_zone_causality.py",
+    "verify_change_notes.py",
     "verify_causal_release_scope.py",
     "verify_normalize.py",
     "verify_sources.py",
@@ -116,7 +117,7 @@ def cli_smoke() -> bool:
             count, healthy = -1, False
         # 12, не 11: додано `cairn_why`. Число тут навмисно жорстке — інакше
         # випадкова втрата інструмента пройшла б непоміченою.
-        good = init.returncode == 0 and count == 12 and doctor.returncode == 0 and healthy is True
+        good = init.returncode == 0 and count == 13 and doctor.returncode == 0 and healthy is True
         detail = f"init={init.returncode} tools={count} doctor_ok={healthy}"
         print(f"  {'ok  ' if good else 'FAIL'} {'cli smoke':32} | {detail}")
         return good

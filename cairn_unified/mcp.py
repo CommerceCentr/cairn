@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import sys
 
-from . import context, evidence, gates as gates_module, handoff, semantic, workflow, work
+from . import change_notes, context, evidence, gates as gates_module, handoff, semantic, workflow, work
 from .canon import canonical
 from .errors import CairnError
 from .store import parse_actor
@@ -26,6 +26,13 @@ def _schema(properties: dict, required: list[str]) -> dict:
 
 
 TOOLS = [
+    {"name": "cairn_change_note",
+     "description": "Записати короткий намір і мотив після правки; коміт підтвердить її пізніше.",
+     "inputSchema": _schema({
+         "repo_path": {"type": "string"}, "paths": {"type": "array", "items": {"type": "string"}},
+         "why": {"type": "string"}, "intent": {"type": "string"},
+         "session_id": {"type": "string"},
+     }, ["repo_path", "paths", "why", "intent"])},
     {"name": "cairn_context", "description": "Зібрати обмежений контекст для задачі.",
      "inputSchema": _schema({
          "work_id": {"type": "string"}, "agent_id": {"type": "string"},
@@ -149,6 +156,14 @@ def call_tool(store, name: str, arguments: dict | None, actor: dict | None = Non
     extra = sorted(set(args) - set(known))
     if extra:
         raise CairnError("bad_argument", f"невідомі аргументи: {', '.join(extra)}", exit_code=2)
+
+    if name == "cairn_change_note":
+        result = change_notes.note(store, args["repo_path"], args["paths"],
+                                   args["why"], args["intent"], actor,
+                                   args.get("session_id", ""))
+        return _result(store, result, trust="agent_proposed",
+                       refs=[result["note_id"]],
+                       note="кандидат; зв'язок із комітом ще не доведено")
 
     if name == "cairn_context":
         package = context.build(

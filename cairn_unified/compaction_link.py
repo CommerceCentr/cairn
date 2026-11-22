@@ -371,6 +371,9 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
             seen.add(pair)
             condition = {
                     "basis": "tool_mutation", "evidence_level": "participation",
+                    # This is a session edit candidate. Git content evidence
+                    # promotes it later; stash/discard never enter node history.
+                    "commit_state": "pending",
                     "evidence": evidence,
                     "rationale": rationale or "",
                     "intent_source": evidence["intent_source"],

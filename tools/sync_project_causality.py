@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cairn_unified import nodes
+from cairn_unified import change_notes, nodes
 from cairn_unified.adapters import opencode
 from cairn_unified.code import git
 from cairn_unified.federation import export_bundle
@@ -46,6 +46,7 @@ def main() -> int:
                               allowed_roots=sources)
         report["agent_sources"].append({"repo": str(source_repo), **result})
     report["witnesses"] = link_evidence(root, repo, sources, True)
+    report["change_notes"] = change_notes.sync(store, repo)
     report["witness_verification"] = verify_stored(store, repo, repo_id)
     report["doctor_ok"] = store.doctor()["ok"]
     if args.bundle:

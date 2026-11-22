@@ -214,7 +214,7 @@ def _omissions(body: dict) -> list[dict]:
 
 
 def _node_chain(store, node_key: str,
-                allowed_events: set[str] | None = None) -> list[dict]:
+                allowed_events: set[tuple[str, str, str]] | None = None) -> list[dict]:
     """Ланцюг «намір -> мотив -> правка» САМЕ цього вузла.
 
     Докази лежать на ребрах `caused_by` (`relations.condition_json`), які
@@ -226,13 +226,13 @@ def _node_chain(store, node_key: str,
     `agent_reasoning_same_event` проти `agent_reasoning_prior_by_seq`.
     """
     rows = store.read(
-        "SELECT condition_json, created_at FROM relations "
+        "SELECT to_id, condition_json, created_at FROM relations "
         "WHERE from_id = ? AND relation_type = 'caused_by' "
         "AND condition_json IS NOT NULL ORDER BY created_at, id",
         (node_key,),
     )
     out: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for row in rows:
         try:
             cond = json.loads(row["condition_json"])
@@ -241,13 +241,17 @@ def _node_chain(store, node_key: str,
         for entry in cond.get("events") or [cond]:
             evidence = entry.get("evidence") or {}
             key = str(evidence.get("event_id") or "")
-            if allowed_events is not None and key not in allowed_events:
+            identity = (key, node_key, str(row["to_id"]))
+            if allowed_events is not None and identity not in allowed_events:
                 continue
-            if key and key in seen:
+            seen_key = (key, str(row["to_id"]))
+            if key and seen_key in seen:
                 continue
-            seen.add(key)
+            seen.add(seen_key)
             out.append({
                 "kind": "node_change",
+                "node_key": node_key,
+                "session_object_id": row["to_id"],
                 "event_id": key,
                 "ts": evidence.get("ts"),
                 "tool": evidence.get("tool"),
@@ -638,7 +642,8 @@ def _zone_context(store, repo_id: str) -> dict:
 def _answer_text(node: dict, groups: dict, intents: list[dict],
                  has_direct_mutation: bool = False,
                  history: list[dict] | None = None,
-                 zone: dict | None = None) -> str:
+                 zone: dict | None = None,
+                 include_pending: bool = False) -> str:
     lines: list[str] = []
     if zone:
         lines.append(f"ЗОНА   Git-комітів {zone['git_facts']}; із сесіями "
@@ -668,11 +673,16 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
             if item.get("checkpoint_context"):
                 lines.append("        намір зафіксувати цей стан: "
                              + str(item["checkpoint_context"].get("intent") or ""))
+            for reason in item.get("change_reasons") or []:
+                lines.append("        ЧОМУ (запис учасника правки; файл підтверджено комітом): "
+                             + " ".join(reason["why"].split())[:400])
+                lines.append("        НАМІР: " + " ".join(reason["intent"].split())[:300])
             for intent in item["session_intents"][:3]:
                 intent_text = " ".join(str(intent.get("text") or "").split())
                 direct = next((s["direct_mutations_for_node"] for s in item["sessions"]
                                if s["object_id"] == intent.get("session_object_id")), 0)
-                label = "намір перед правкою" if direct else "контекст сесії"
+                label = ("намір сесії перед правкою (вузлова причина не доведена)"
+                         if direct else "контекст сесії")
                 lines.append(f"        {label} [{intent.get('seq')}]: "
                              f"{intent_text[:260] or '(текст не збережено)'}")
             for patch in item.get("patches") or []:
@@ -715,7 +725,7 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
     elif not history:
         lines.append("ЧОМУ   не встановлено: намірів користувача не записано")
     autos = groups.get("auto_compaction") or []
-    if history and sessions:
+    if history and sessions and include_pending:
         linked_ids = {str(s.get("object_id")) for item in history
                       for s in item.get("sessions") or []}
         unlinked = [s for s in sessions if str(s.get("id")) not in linked_ids]
@@ -751,7 +761,7 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
            as_of: str | None = None, budget_chars: int | None = None,
            chronology: bool = True, intent_text: bool = False,
            opencode_db: str | None = None, repo_path: str | None = None,
-           compact: bool = False) -> dict:
+           compact: bool = False, include_pending: bool = False) -> dict:
     """Шість полів: answer, chronology, provenance, trust, omissions, cost."""
     from . import nodes
 
@@ -878,6 +888,10 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
     history.sort(key=lambda item: (item.get("topo_index") is None,
                                    item.get("topo_index") if item.get("topo_index") is not None
                                    else item.get("committed_at") or ""))
+    from . import change_notes
+    reasons_by_commit = change_notes.linked(store, repo_id, path.replace("\\", "/"))
+    for item in history:
+        item["change_reasons"] = reasons_by_commit.get(item["commit"], [])
     intents = _intents(list(bodies.values()))
     if intent_text:
         # Джерело беремо з ОБʼЄКТІВ, а не припускаємо opencode: сесія могла
@@ -930,20 +944,55 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
     # `auto_compaction.summary`. Без нього відповідь називала джерело, але
     # не показувала його: виміряно приладом `answer_two_ways` — 2 факти з 7,
     # і обидва пропущені «чому» були саме тут.
-    linked_events = {str(event["event_id"]) for item in history
+    session_identities: dict[str, tuple[str, str]] = {}
+
+    def session_identity(object_id: str) -> tuple[str, str]:
+        object_id = str(object_id or "")
+        if object_id not in session_identities:
+            source = (_object(store, object_id, as_of) or {}).get("semantic") or {}
+            session_identities[object_id] = (
+                str(source.get("source_kind") or ""),
+                str(source.get("session_id") or object_id))
+        return session_identities[object_id]
+
+    def change_key(event: dict) -> tuple[str, str, tuple[str, str]]:
+        return (str(event.get("event_id") or ""),
+                str(event.get("node_key") or ""),
+                session_identity(str(event.get("session_object_id") or "")))
+
+    linked_events = {change_key(event) for item in history
                      for event in item["mutations_for_node"]}
-    detail = [item for key in sorted(query_keys)
-              for item in _node_chain(
-                  store, key, allowed_events=linked_events if commit else None)]
+    witnessed_events = {change_key(event) for item in history
+                        for event in item["mutations_for_node"]
+                        if event.get("evidence_level") == "content_transition"}
+    all_detail = [item for key in sorted(query_keys)
+                  for item in _node_chain(store, key)]
+    unique_detail: dict[tuple, dict] = {}
+    for item in all_detail:
+        key = change_key(item)
+        if key not in unique_detail or (item.get("motive") and
+                                        not unique_detail[key].get("motive")):
+            unique_detail[key] = item
+    all_detail = list(unique_detail.values())
+    if commit:
+        all_detail = [item for item in all_detail if change_key(item) in linked_events]
     for item in history:
-        event_ids = {str(event.get("event_id") or "")
-                     for event in item["mutations_for_node"]}
-        item["node_changes"] = [change for change in detail
-                                if change.get("event_id") in event_ids]
+        event_ids = {change_key(event) for event in item["mutations_for_node"]}
+        item["node_changes"] = [change for change in all_detail
+                                if change_key(change) in event_ids]
+    for change in all_detail:
+        change["semantic_cause_status"] = (
+            "node_attested" if change_key(change) in witnessed_events
+            and change.get("motive")
+            and change.get("motive_source") == "agent_reasoning_same_event"
+            else "agent_proposed" if change.get("motive") else "not_established")
+    detail = (all_detail if include_pending else
+              [item for item in all_detail if change_key(item) in linked_events])
     direct = any(item.get("relation") == "caused_by"
                  and item.get("object_id") in bodies for item in chrono)
     zone = _zone_context(store, repo_id)
-    text = _answer_text(node, groups, intents, direct, history, zone)
+    text = _answer_text(node, groups, intents, direct, history, zone,
+                        include_pending)
     freshness = {"status": "local_git_unavailable"}
     if not as_of:
         from .code import git as git_mod
@@ -971,12 +1020,14 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
     if freshness["status"] == "stale":
         text = ("СХОВИЩЕ ЗАСТАРІЛЕ: локальний Git містить коміт, якого немає "
                 "в Cairn; запусти sync_project_causality перед висновком.\n" + text)
-    unlinked_changes = sum(item.get("event_id") not in linked_events
-                           for item in detail)
+    unlinked_changes = sum(change_key(item) not in linked_events
+                           for item in all_detail)
     if unlinked_changes:
-        text += (f"\nНЕПРИВʼЯЗАНІ ПРАВКИ ВУЗЛА  {unlinked_changes}; "
-                 "звʼязок із конкретним комітом не доведено")
-    if not detail:
+        text += (f"\nКАНДИДАТИ ПОЗА ІСТОРІЄЮ ВУЗЛА  {unlinked_changes}; "
+                 "звʼязок із комітом не доведено"
+                 + ("; показано нижче" if include_pending else
+                    "; деталі через --include-pending"))
+    if not all_detail:
         # Запас для сховищ, записаних до схеми 3: там докази ребра ще не
         # проєктувались, тому беремо сесійну автокомактацію. Вона ширша за
         # цей вузол, і це сказано в полі `scope`.
@@ -1011,7 +1062,12 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         # тут немає ЗА ЗАДУМОМ: код не повертається ніколи, його читають
         # напряму (інакше відповідь дублювала б файл).
         "coverage": {
-            "node_changes": len([x for x in detail if x.get("kind") == "node_change"]),
+            "node_changes": len([x for x in all_detail if x.get("kind") == "node_change"]),
+            "committed_node_changes": len([x for x in all_detail
+                                            if change_key(x) in linked_events]),
+            "node_attested_causes": len([x for x in all_detail
+                                         if x.get("semantic_cause_status") == "node_attested"])
+                                     + sum(len(item.get("change_reasons") or []) for item in history),
             "unlinked_node_changes": unlinked_changes,
             "user_intents": len(intents),
             "motives_same_event": len([x for x in detail
@@ -1089,6 +1145,7 @@ def _compact_answer(body: dict) -> dict:
         "direct_mutations": item.get("direct_mutations", 0),
         "agent_sources": sorted({str(s.get("source_kind"))
                                  for s in item.get("sessions") or []}),
+        "change_reasons": item.get("change_reasons") or [],
         "deleted_lines": sum(len(p.get("deleted_lines") or [])
                              for p in item.get("patches") or []),
     } for item in body.get("commit_history") or []]
@@ -1104,7 +1161,8 @@ def _compact_answer(body: dict) -> dict:
                             "evidence_level", "text", "note", "event_id", "ts")
                            if item.get(k)}
             unique[key]["semantic_cause_status"] = (
-                "agent_proposed" if item.get("motive") else "not_established")
+                item.get("semantic_cause_status") or
+                ("agent_proposed" if item.get("motive") else "not_established"))
             if not item.get("motive"):
                 unique[key]["note"] = (
                     "Намір є контекстом сесії; семантичну причину правки не встановлено")

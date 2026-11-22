@@ -59,14 +59,14 @@ def main() -> int:
 
         print("1. РЕЄСТР І КОНТРАКТ")
         catalog = mcp.tools_list()["tools"]
-        ok("12 інструментів", len(catalog) == 12, str(len(catalog)))
+        ok("13 інструментів", len(catalog) == 13, str(len(catalog)))
         expected = ("cairn_context", "cairn_work_next", "cairn_work_show", "cairn_work_update",
                     "cairn_semantic_query", "cairn_code_explore", "cairn_decision_propose",
                     "cairn_evidence_attach", "cairn_checkpoint", "cairn_handoff", "cairn_status")
         # Одинадцять назв зі §16.2 мусять бути НА МІСЦІ й точними. Розширення
         # дозволене, але лише НАЗВАНЕ: інакше «збігається зі spec» означало б
         # дві різні речі — «spec виконано» і «нічого не додано».
-        extensions = ("cairn_why",)
+        extensions = ("cairn_why", "cairn_change_note")
         names = tuple(t["name"] for t in catalog)
         ok("усі 11 назв зі spec на місці", set(expected) <= set(names),
            str(sorted(set(expected) - set(names))))

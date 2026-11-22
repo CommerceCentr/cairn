@@ -63,12 +63,48 @@ def main() -> int:
                     actor=ACTOR, condition={"basis": "tool_mutation",
                                             "evidence": {"event_id": "edit-1",
                                                          "path": PY_FILE,
-                                                         "intent": "intent from Claude"}})
+                                                         "rationale_source": "agent_reasoning_same_event",
+                                                         "intent": "intent from Claude"},
+                                            "rationale": "same tool reason for this edit"})
                 semantic.relate(
                     store, from_id=sid, to_id=facts[sha],
                     relation="mutation_in_commit", actor=ACTOR,
                     condition={"event_id": "edit-1", "node_key": whole,
-                               "path": PY_FILE, "evidence_level": "participation"})
+                               "path": PY_FILE, "evidence_level": "content_transition"})
+
+        semantic.relate(store, from_id=whole, to_id=claude_sid,
+                        relation="caused_by", actor=ACTOR,
+                        condition={"basis": "tool_mutation",
+                                   "evidence": {"event_id": "pending-only", "path": PY_FILE,
+                                                "intent": "discarded candidate"},
+                                   "rationale": "uncommitted explanation"})
+        symbol = next(node["stable_key"] for node in nodes.resolve(
+            store, ident["id"], PY_FILE) if node["stable_key"] != whole)
+        semantic.relate(store, from_id=symbol, to_id=claude_sid,
+                        relation="caused_by", actor=ACTOR,
+                        condition={"basis": "tool_mutation",
+                                   "evidence": {"event_id": "edit-1", "path": PY_FILE},
+                                   "rationale": "same event id, different node"})
+        other_session = semantic.put_object(
+            store, object_type="session", title="uncommitted agent", summary="",
+            actor=ACTOR, stable_key="fixture-uncommitted-agent",
+            semantic={"kind": "session", "session_id": "uncommitted",
+                      "source_kind": "codex"})["object"]["id"]
+        semantic.relate(store, from_id=whole, to_id=other_session,
+                        relation="caused_by", actor=ACTOR,
+                        condition={"basis": "tool_mutation",
+                                   "evidence": {"event_id": "edit-1", "path": PY_FILE},
+                                   "rationale": "same event id, different session"})
+        same_session_other_compaction = semantic.put_object(
+            store, object_type="session", title="later compaction", summary="",
+            actor=ACTOR, stable_key="fixture-same-session-later-compaction",
+            semantic={"kind": "session", "session_id": "claude_code_jsonl",
+                      "source_kind": "claude_code_jsonl"})["object"]["id"]
+        semantic.relate(store, from_id=whole, to_id=same_session_other_compaction,
+                        relation="caused_by", actor=ACTOR,
+                        condition={"basis": "tool_mutation",
+                                   "evidence": {"event_id": "edit-1", "path": PY_FILE},
+                                   "rationale": "same edit in later compaction"})
 
         all_history = why.answer(store, repo_id=ident["id"], path=PY_FILE)
         first = why.answer(store, repo_id=ident["id"], path=PY_FILE,
@@ -79,6 +115,18 @@ def main() -> int:
                   all_history["commit_history"]}
         assert actual == {repo["first"]: 1, repo["head"]: 0}, actual
         assert first["coverage"]["node_changes"] == 1
+        assert all_history["coverage"]["unlinked_node_changes"] == 3
+        assert all_history["coverage"]["node_attested_causes"] == 1
+        assert all(item.get("event_id") != "pending-only"
+                   for item in all_history["why_detail"])
+        assert all(item.get("node_key") == whole
+                   for item in all_history["why_detail"])
+        assert all(item.get("session_object_id") == claude_sid
+                   for item in all_history["why_detail"])
+        pending = why.answer(store, repo_id=ident["id"], path=PY_FILE,
+                             include_pending=True)
+        assert any(item.get("event_id") == "pending-only"
+                   for item in pending["why_detail"])
         assert second["coverage"]["node_changes"] == 0
         assert "intent from claude_code_jsonl" in first["answer"]
         assert "intent from codex_rollout" in second["answer"]

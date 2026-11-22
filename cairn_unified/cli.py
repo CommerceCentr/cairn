@@ -61,6 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
     ca = c.add_parser("add"); ca.add_argument("path")
     c.add_parser("list")
 
+    g, c = group("change")
+    note = c.add_parser("note", help="записати мотив поточної правки до коміту")
+    note.add_argument("--repo-path", required=True)
+    note.add_argument("--path", action="append", required=True)
+    note.add_argument("--why", required=True)
+    note.add_argument("--intent", required=True)
+    note.add_argument("--session-id", default="")
+    trigger = c.add_parser("sync", help="зв'язати записи причин із Git-комітами")
+    trigger.add_argument("--repo-path", required=True)
+
     g, c = group("code")
     ci = c.add_parser("index"); ci.add_argument("repo_id")
     cn = c.add_parser("nodes"); cn.add_argument("repo_id")
@@ -195,6 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     cw.add_argument("--budget", type=int, default=None, help="символів, не токенів")
     cw.add_argument("--full", action="store_true",
                     help="повні докази, тексти правок і походження без стислого огляду")
+    cw.add_argument("--include-pending", action="store_true",
+                    help="показати правки без доведеного зв'язку з Git-комітом")
     cw.add_argument("--no-chronology", dest="chronology", action="store_false")
     cw.add_argument("--intent-text", dest="intent_text", action="store_true",
                     help="дочитати текст намірів із джерела, звіривши sha256")
@@ -237,6 +249,13 @@ def dispatch(args, actor: dict):
                 return {"repository": ev["payload"], "event_id": ev["event_id"], "replayed": ev["replayed"]}
             return store.mutate(op)
         return store.read("SELECT * FROM repositories")
+
+    if group == "change":
+        from . import change_notes
+        if cmd == "note":
+            return change_notes.note(store, args.repo_path, args.path, args.why,
+                                     args.intent, actor, args.session_id)
+        return change_notes.sync(store, args.repo_path)
 
     if group == "code":
         if cmd == "nodes":
@@ -432,6 +451,7 @@ def dispatch(args, actor: dict):
             budget_chars=args.budget, chronology=args.chronology,
             intent_text=args.intent_text, opencode_db=args.opencode_db,
             repo_path=args.repo_path, compact=not args.full,
+            include_pending=args.include_pending,
         )
 
     if group == "mcp":
