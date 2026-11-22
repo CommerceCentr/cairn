@@ -180,6 +180,8 @@ def _time_of(body: dict) -> str:
     sem = body.get("semantic") or {}
     if sem.get("kind") == "commit_fact" and sem.get("committed_at"):
         return str(sem["committed_at"])
+    if sem.get("source_occurred_at"):
+        return str(sem["source_occurred_at"])
     return str(body.get("observed_at") or body.get("recorded_at") or "")
 
 
@@ -236,27 +238,28 @@ def _node_chain(store, node_key: str,
             cond = json.loads(row["condition_json"])
         except (TypeError, ValueError):
             continue
-        evidence = cond.get("evidence") or {}
-        key = str(evidence.get("event_id") or "")
-        if allowed_events is not None and key not in allowed_events:
-            continue
-        if key and key in seen:
-            continue
-        seen.add(key)
-        out.append({
-            "kind": "node_change",
-            "event_id": key,
-            "ts": evidence.get("ts"),
-            "tool": evidence.get("tool"),
-            "path": evidence.get("path"),
-            "intent": evidence.get("intent"),
-            "intent_seq": evidence.get("intent_seq"),
-            "intent_source": evidence.get("intent_source"),
-            "motive": cond.get("rationale") or "",
-            "motive_source": evidence.get("rationale_source"),
-            "evidence_level": cond.get("evidence_level"),
-            "note": "мотив — слова агента, не доведене твердження",
-        })
+        for entry in cond.get("events") or [cond]:
+            evidence = entry.get("evidence") or {}
+            key = str(evidence.get("event_id") or "")
+            if allowed_events is not None and key not in allowed_events:
+                continue
+            if key and key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "kind": "node_change",
+                "event_id": key,
+                "ts": evidence.get("ts"),
+                "tool": evidence.get("tool"),
+                "path": evidence.get("path"),
+                "intent": evidence.get("intent"),
+                "intent_seq": evidence.get("intent_seq"),
+                "intent_source": evidence.get("intent_source"),
+                "motive": entry.get("rationale") or "",
+                "motive_source": evidence.get("rationale_source"),
+                "evidence_level": cond.get("evidence_level"),
+                "note": "мотив — слова агента, не доведене твердження",
+            })
     return out
 
 
@@ -408,7 +411,21 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
     """Per-commit evidence for this node, across all agent sessions."""
     history = []
     seen_facts: set[str] = set()
-    for fact in sorted(facts, key=_time_of):
+    order: dict[str, int] = {}
+    repo_ids = {str((fact.get("semantic") or {}).get("repo_id")) for fact in facts
+                if (fact.get("semantic") or {}).get("repo_id")}
+    if len(repo_ids) == 1:
+        from .code import git
+        repo = store.read_one("SELECT path FROM repositories WHERE id = ?", (next(iter(repo_ids)),))
+        if repo:
+            try:
+                shas = git.git(repo["path"], "rev-list", "--topo-order", "--reverse", "--all")
+                order = {sha: index for index, sha in enumerate(shas.splitlines())}
+            except (CairnError, OSError):
+                pass
+    for fact in sorted(facts, key=lambda item: (
+            0, order[(item.get("semantic") or {}).get("commit")]
+        ) if (item.get("semantic") or {}).get("commit") in order else (1, _time_of(item))):
         if str(fact["id"]) in seen_facts:
             continue
         seen_facts.add(str(fact["id"]))
@@ -498,6 +515,7 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
                                 "added_lines": patch_sem.get("added_lines") or [],
                                 "object_id": row["to_id"]})
         history.append({"commit": sha, "committed_at": sem.get("committed_at"),
+                        "parents": sem.get("parents") or [],
                         "message": sem.get("message") or "",
                         "git_fact_id": fact["id"], "sessions": sessions,
                         "session_intents": session_intents,
@@ -510,6 +528,49 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
     return history
 
 
+def _archive_commit_history(store, repo_id: str, path: str) -> list[dict]:
+    """Git facts recorded as one portable event per commit."""
+    out = []
+    retracted = {
+        str(json.loads(row["payload_json"]).get("commit") or "")
+        for row in store.read(
+            "SELECT payload_json FROM events WHERE event_type = 'git.commit_retracted' "
+            "AND aggregate_id = ?", (repo_id,))
+    }
+    contexts = {}
+    for row in store.read(
+            "SELECT payload_json FROM events WHERE event_type = 'git.commit_context' "
+            "AND aggregate_id = ?", (repo_id,)):
+        context = json.loads(row["payload_json"])
+        contexts[str(context.get("commit") or "")] = context
+    for row in store.read(
+            "SELECT payload_json FROM events WHERE event_type = 'git.commit_indexed' "
+            "AND aggregate_id = ? ORDER BY seq", (repo_id,)):
+        item = json.loads(row["payload_json"])
+        if item["commit"] in retracted:
+            continue
+        files = [entry for entry in item.get("files") or []
+                 if entry.get("path", "").replace("\\", "/") == path.replace("\\", "/")]
+        if not files:
+            continue
+        out.append({
+            "commit": item["commit"], "committed_at": item.get("committed_at"),
+            "parents": item.get("parents") or [], "message": item.get("message") or "",
+            "git_author": item.get("author"), "git_committer": item.get("committer"),
+            "signature_status": item.get("signature_status"),
+            "patch_omission": item.get("patch_omission") or "",
+            "topo_index": item.get("topo_index"), "git_fact_id": "",
+            "sessions": [], "session_intents": [],
+            "patches": [{"path": entry["path"],
+                         "deleted_lines": entry.get("deleted_lines") or [],
+                         "added_lines": []} for entry in files],
+            "mutations_for_node": [], "direct_mutations": 0,
+            "evidence": "git_only",
+            "checkpoint_context": contexts.get(item["commit"]),
+        })
+    return out
+
+
 def _zone_context(store, repo_id: str) -> dict:
     """Coverage of the shared graph for this repository, across agents."""
     symbol_counts = store.read_one(
@@ -520,6 +581,14 @@ def _zone_context(store, repo_id: str) -> dict:
         "SELECT DISTINCT r.from_id FROM relations r JOIN code_symbols c "
         "ON c.stable_key = r.to_id WHERE r.relation_type = 'mutated' "
         "AND c.repo_id = ?", (repo_id,))}
+    archived = store.read_one(
+        "SELECT COUNT(*) AS n FROM events WHERE event_type = 'git.commit_indexed' "
+        "AND aggregate_id = ?", (repo_id,))
+    retracted = store.read_one(
+        "SELECT COUNT(*) AS n FROM events WHERE event_type = 'git.commit_retracted' "
+        "AND aggregate_id = ?", (repo_id,))
+    total_git = max(len(facts), int((archived or {}).get("n") or 0)
+                    - int((retracted or {}).get("n") or 0))
     linked_commits: set[str] = set()
     mutation_commits: set[str] = set()
     sources: set[str] = set()
@@ -530,22 +599,23 @@ def _zone_context(store, repo_id: str) -> dict:
                 "SELECT from_id, to_id, relation_type FROM relations "
                 f"WHERE to_id IN ({marks}) AND relation_type IN "
                 "('context_for_commit','mutation_in_commit')", tuple(facts)):
+            linked_commits.add(str(row["to_id"]))
+            session = _object(store, str(row["from_id"]), None)
+            if session:
+                sem = session.get("semantic") or {}
+                sources.add(str(sem.get("source_kind") or
+                                sem.get("session_source") or "unknown"))
             if row["relation_type"] == "context_for_commit":
-                linked_commits.add(str(row["to_id"]))
-                session = _object(store, str(row["from_id"]), None)
-                if session:
-                    sem = session.get("semantic") or {}
-                    sources.add(str(sem.get("source_kind") or
-                                    sem.get("session_source") or "unknown"))
+                continue
             else:
                 mutation_commits.add(str(row["to_id"]))
                 mutation_edges += 1
     return {"indexed_nodes": int((symbol_counts or {}).get("nodes") or 0),
             "indexed_paths": int((symbol_counts or {}).get("paths") or 0),
             "historical_file_nodes": int((symbol_counts or {}).get("historical_files") or 0),
-            "git_facts": len(facts), "commits_with_session": len(linked_commits),
+            "git_facts": total_git, "commits_with_session": len(linked_commits),
             "commits_with_structured_mutation": len(mutation_commits),
-            "git_only_commits": len(facts - linked_commits),
+            "git_only_commits": max(0, total_git - len(linked_commits)),
             "mutation_in_commit_edges": mutation_edges,
             "agent_sources": sorted(sources)}
 
@@ -580,6 +650,9 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
                              "цього вузла не доведена")
             elif item["evidence"] == "git_only":
                 lines.append("        Git доводить зміну вузла; сесію не встановлено")
+            if item.get("checkpoint_context"):
+                lines.append("        намір зафіксувати цей стан: "
+                             + str(item["checkpoint_context"].get("intent") or ""))
             for intent in item["session_intents"][:3]:
                 intent_text = " ".join(str(intent.get("text") or "").split())
                 direct = next((s["direct_mutations_for_node"] for s in item["sessions"]
@@ -592,6 +665,8 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
                 if removed:
                     lines.append(f"        вилучено з {patch['path']} ({len(removed)} рядків):")
                     lines.extend(f"          - {line}" for line in removed[:12])
+            if item.get("patch_omission"):
+                lines.append(f"        вилучені рядки не зчитані: {item['patch_omission']}")
             motives = [change for change in item.get("node_changes") or []
                        if change.get("motive")]
             if motives:
@@ -625,6 +700,26 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
     elif not history:
         lines.append("ЧОМУ   не встановлено: намірів користувача не записано")
     autos = groups.get("auto_compaction") or []
+    if history and sessions:
+        linked_ids = {str(s.get("object_id")) for item in history
+                      for s in item.get("sessions") or []}
+        unlinked = [s for s in sessions if str(s.get("id")) not in linked_ids]
+        if unlinked:
+            lines.append(f"СЕСІЇ ВУЗЛА  {len(unlinked)}; звʼязок із конкретним "
+                         "комітом не доведено")
+        for sess in sorted(unlinked, key=_time_of):
+            sem = sess.get("semantic") or {}
+            lines.append(f"СЕСІЯ  {_time_of(sess)[:19] or 'час невідомий'} "
+                         f"{sem.get('source_kind') or 'agent'} "
+                         f"{sem.get('session_id') or ''}")
+            summary = " ".join(str(sess.get("summary") or "").split())
+            if summary:
+                lines.append(f"        компактація: {summary[:600]}")
+            for auto in autos:
+                if (auto.get("semantic") or {}).get("session_obj_id") == sess.get("id"):
+                    cause = " ".join(str(auto.get("summary") or "").split())
+                    if cause:
+                        lines.append(f"        намір і мотив: {cause[:900]}")
     if autos and not history:
         sem = autos[0].get("semantic") or {}
         shown, total = sem.get("chain_shown"), sem.get("chain_total")
@@ -744,6 +839,28 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         chrono = [item for item in chrono if item["object_id"] in bodies]
     history = _commit_history(
         store, groups.get("commit_fact") or [], bodies, query_keys)
+    archive_history = _archive_commit_history(store, repo_id, path)
+    if commit:
+        archive_history = [item for item in archive_history
+                           if item["commit"].startswith(str(commit))]
+    by_commit = {item["commit"]: item for item in history}
+    for item in archive_history:
+        prior = by_commit.get(item["commit"])
+        if prior:
+            prior.setdefault("topo_index", item.get("topo_index"))
+            prior.setdefault("git_author", item.get("git_author"))
+            prior.setdefault("git_committer", item.get("git_committer"))
+            prior.setdefault("signature_status", item.get("signature_status"))
+            prior.setdefault("patch_omission", item.get("patch_omission"))
+            prior.setdefault("checkpoint_context", item.get("checkpoint_context"))
+            if not prior.get("patches"):
+                prior["patches"] = item["patches"]
+        else:
+            history.append(item)
+            by_commit[item["commit"]] = item
+    history.sort(key=lambda item: (item.get("topo_index") is None,
+                                   item.get("topo_index") if item.get("topo_index") is not None
+                                   else item.get("committed_at") or ""))
     intents = _intents(list(bodies.values()))
     if intent_text:
         # Джерело беремо з ОБʼЄКТІВ, а не припускаємо opencode: сесія могла
@@ -796,11 +913,11 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
     # `auto_compaction.summary`. Без нього відповідь називала джерело, але
     # не показувала його: виміряно приладом `answer_two_ways` — 2 факти з 7,
     # і обидва пропущені «чому» були саме тут.
-    event_filter = ({str(event["event_id"]) for item in history
+    linked_events = {str(event["event_id"]) for item in history
                      for event in item["mutations_for_node"]}
-                    if history else None)
     detail = [item for key in sorted(query_keys)
-              for item in _node_chain(store, key, allowed_events=event_filter)]
+              for item in _node_chain(
+                  store, key, allowed_events=linked_events if commit else None)]
     for item in history:
         event_ids = {str(event.get("event_id") or "")
                      for event in item["mutations_for_node"]}
@@ -810,6 +927,11 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
                  and item.get("object_id") in bodies for item in chrono)
     zone = _zone_context(store, repo_id)
     text = _answer_text(node, groups, intents, direct, history, zone)
+    unlinked_changes = sum(item.get("event_id") not in linked_events
+                           for item in detail)
+    if unlinked_changes:
+        text += (f"\nНЕПРИВʼЯЗАНІ ПРАВКИ ВУЗЛА  {unlinked_changes}; "
+                 "звʼязок із конкретним комітом не доведено")
     if not detail:
         # Запас для сховищ, записаних до схеми 3: там докази ребра ще не
         # проєктувались, тому беремо сесійну автокомактацію. Вона ширша за
@@ -845,6 +967,7 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         # напряму (інакше відповідь дублювала б файл).
         "coverage": {
             "node_changes": len([x for x in detail if x.get("kind") == "node_change"]),
+            "unlinked_node_changes": unlinked_changes,
             "user_intents": len(intents),
             "motives_same_event": len([x for x in detail
                                        if x.get("motive_source") == "agent_reasoning_same_event"]),

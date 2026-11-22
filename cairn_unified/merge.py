@@ -246,9 +246,11 @@ def merge_bundle(store, bundle: dict, *, repo_path: str | Path,
             event = by_id[eid]
             stored = store.append(
                 con, event.get("event_type"), event.get("aggregate_id"),
-                event.get("payload") or {}, actor,
+                event.get("payload") or {},
+                event.get("actor") or {"kind": "unknown", "id": "legacy"},
                 f"fed:{fed.get('digest', 'unknown')}:{eid}",
-                causation_id=federation._origin_id(event))
+                causation_id=federation._origin_id(event),
+                occurred_at=event.get("occurred_at"))
             if not stored.get("replayed"):
                 applied_events += 1
         for rel, payload in (bundle.get("context_objects") or {}).items():

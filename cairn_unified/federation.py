@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from . import ledger
-from .canon import canonical, sha256_text
+from .canon import canonical, parse_iso, prefixed, sha256_text
 from .errors import CairnError
 from .store import INIT_FOLDERS, Store, require_human
 
@@ -53,6 +53,12 @@ def bundle_events(bundle: dict) -> list[dict]:
         for field in ("event_id", "event_type"):
             if not isinstance(event.get(field), str) or not event.get(field):
                 problems.append({"index": index, "reason": f"missing_{field}"})
+        if not isinstance(event.get("actor"), dict):
+            problems.append({"index": index, "reason": "invalid_actor"})
+        try:
+            parse_iso(str(event.get("occurred_at") or ""))
+        except (ValueError, TypeError):
+            problems.append({"index": index, "reason": "invalid_occurred_at"})
     if problems:
         raise CairnError("bundle_malformed", "подія бандла має неправильну форму",
                          exit_code=4, details={"problems": problems[:20]})
@@ -99,6 +105,8 @@ def inspect(store, bundle: dict) -> dict:
     local_ids = {_origin_id(row) for row in local_rows}
     seen_in_bundle: set[str] = set()
     by_aggregate: dict[str, list[dict]] = {}
+    bundle_positions = {_origin_id(event): index
+                        for index, event in enumerate(events)}
     for row in local_rows:
         key = row["aggregate_id"] or ""
         by_aggregate.setdefault(key, []).append(row)
@@ -106,7 +114,7 @@ def inspect(store, bundle: dict) -> dict:
     duplicates: list[str] = []
     conflicts: list[dict] = []
     incoming: list[dict] = []
-    for event in events:
+    for position, event in enumerate(events):
         origin = _origin_id(event)
         if origin in local_ids or origin in seen_in_bundle:
             duplicates.append(event["event_id"])
@@ -118,11 +126,18 @@ def inspect(store, bundle: dict) -> dict:
         if touched:
             for local in by_aggregate.get(aggregate, []):
                 local_payload = json.loads(local["payload_json"] or "{}")
-                if set(PROTECTED).intersection(local_payload) and local["payload_hash"] != event.get("payload_hash"):
+                local_origin = _origin_id(local)
+                if (local_origin in bundle_positions
+                        and bundle_positions[local_origin] < position):
+                    continue
+                differing = sorted(field for field in touched
+                                   if field in local_payload
+                                   and local_payload[field] != payload[field])
+                if differing:
                     conflicts.append({
                         "event_id": event["event_id"],
                         "aggregate_id": aggregate,
-                        "fields": touched,
+                        "fields": differing,
                         "local_event_id": local["event_id"],
                         "reason": "protected_field_divergence",
                     })
@@ -130,6 +145,8 @@ def inspect(store, bundle: dict) -> dict:
         incoming.append(event)
     return {
         "format": bundle.get("format"),
+        "account_verification": "unavailable_in_agent_journals",
+        "integrity_verification": "bundle_digest_and_ledger_chain",
         "bundle_digest": bundle.get("digest"),
         "local_event_count": len(local_rows),
         "bundle_event_count": len(events),
@@ -177,8 +194,9 @@ def import_bundle(store, bundle: dict, actor: dict, *, apply: bool = False) -> d
             key = f"fed:{bundle.get('digest', 'unknown')}:{eid}"
             stored = store.append(
                 con, event["event_type"], event.get("aggregate_id"),
-                event.get("payload") or {}, actor, key,
+                event.get("payload") or {}, event.get("actor") or {"kind": "unknown", "id": "legacy"}, key,
                 causation_id=_origin_id(event),
+                occurred_at=event.get("occurred_at"),
             )
             if not stored["replayed"]:
                 applied += 1
@@ -217,26 +235,41 @@ def restore_bundle(bundle: dict, target_root: str | Path, actor: dict) -> dict:
                          details={"problems": checked["problems"]})
     target = Path(target_root).resolve()
     if target.exists() and any(target.iterdir()):
-        raise CairnError("target_not_empty", "тека restore має бути порожньою", exit_code=2)
+        if (target / ".cairn").exists() or not (target / ".git").exists():
+            raise CairnError("target_not_empty", "тека restore має бути порожньою або Git checkout без .cairn", exit_code=2)
+        from .code import git
+        identity = git.identity(target)
+        repo_ids = {str(ev.get("payload", {}).get("id")) for ev in bundle_events(bundle)
+                    if ev.get("event_type") == "repository.upserted"}
+        if identity["id"] not in repo_ids:
+            raise CairnError("repo_identity_mismatch", "бандл не належить цьому Git checkout", exit_code=4)
     target.mkdir(parents=True, exist_ok=True)
     cairn = target / ".cairn"
     cairn.mkdir(parents=True, exist_ok=True)
     for folder in INIT_FOLDERS:
         (cairn / folder).mkdir(parents=True, exist_ok=True)
     (cairn / ".gitignore").write_text("cache/\nruntime/\nsecrets/\n", encoding="utf-8", newline="\n")
+    manifest = dict(bundle["manifest"])
+    manifest["replica_id"] = prefixed("rep")
     (cairn / "manifest.json").write_text(
-        json.dumps(bundle["manifest"], ensure_ascii=False, indent=2) + "\n",
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8", newline="\n",
     )
     store = Store.open(target)
     imported = import_bundle(store, bundle, actor, apply=True)
+    replica_id = manifest["replica_id"]
+    store.mutate(lambda con: store.append(con, "replica.created", replica_id, {
+        "id": replica_id, "replica_key": replica_id, "topology": "local",
+        "authority_scope": "local", "trust_state": "local_authority",
+    }, {"kind": "system", "id": "restore"}, f"replica:{replica_id}"))
     rebuilt = store.rebuild()
     health = store.doctor()
     return {
         "restored_events": imported["applied_count"],
         "source_events": checked["events"],
         "project_id": bundle["manifest"]["project_id"],
-        "replica_id": bundle["manifest"]["replica_id"],
+        "replica_id": replica_id,
         "rebuild": rebuilt,
         "doctor_ok": health["ok"],
+        "account_verification": "unavailable_in_agent_journals",
     }

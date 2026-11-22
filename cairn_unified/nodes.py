@@ -15,6 +15,8 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
+import tarfile
 from pathlib import Path
 
 from . import code
@@ -208,24 +210,59 @@ def discover(repo_path: str, repo_id: str, paths: list[str] | None = None) -> li
             data = source.read_bytes()
         except OSError:
             continue
-        for node in nodes_of(rel, data):
-            chunk = data[int(node["start"]):int(node["end"])] if node["unit"] == "byte" else data
-            fingerprint_text = (chunk or data).decode("utf-8", "replace")
-            lines = data[:int(node["start"])].count(b"\n") + 1 if node["unit"] == "byte" else 1
-            end_line = lines + chunk.count(b"\n") if node["unit"] == "byte" else max(1, data.count(b"\n") + 1)
-            address = node["address"]
-            symbols.append({
-                "id": node_key(repo_id, rel, address),
-                "stable_key": node_key(repo_id, rel, address),
-                "language": language_of(rel),
-                "qualified_name": address,
-                "fingerprint": sha256_text(fingerprint_text),
-                "body_fingerprint": sha256_text(fingerprint_text),
-                "precision": node["precision"],
-                "path": rel,
-                "span": {"start_line": lines, "end_line": max(lines, end_line),
-                         "start_byte": node["start"], "end_byte": node["end"]},
-            })
+        symbols.extend(_symbols_from_data(rel, data, repo_id))
+    symbols.sort(key=lambda item: item["stable_key"])
+    return symbols
+
+
+def _symbols_from_data(rel: str, data: bytes, repo_id: str) -> list[dict]:
+    symbols: list[dict] = []
+    for node in nodes_of(rel, data):
+        chunk = data[int(node["start"]):int(node["end"])] if node["unit"] == "byte" else data
+        fingerprint_text = (chunk or data).decode("utf-8", "replace")
+        lines = data[:int(node["start"])].count(b"\n") + 1 if node["unit"] == "byte" else 1
+        end_line = lines + chunk.count(b"\n") if node["unit"] == "byte" else max(1, data.count(b"\n") + 1)
+        address = node["address"]
+        symbols.append({
+            "id": node_key(repo_id, rel, address),
+            "stable_key": node_key(repo_id, rel, address),
+            "language": language_of(rel),
+            "qualified_name": address,
+            "fingerprint": sha256_text(fingerprint_text),
+            "body_fingerprint": sha256_text(fingerprint_text),
+            "precision": node["precision"],
+            "path": rel,
+            "span": {"start_line": lines, "end_line": max(lines, end_line),
+                     "start_byte": node["start"], "end_byte": node["end"]},
+        })
+    return symbols
+
+
+def discover_commit(repo_path: str, repo_id: str, revision: str = "HEAD") -> list[dict]:
+    """Index committed bytes, excluding uncommitted worktree changes."""
+    proc = subprocess.Popen(["git", "-C", repo_path, "archive", "--format=tar", revision],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    symbols: list[dict] = []
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|") as archive:
+            for member in archive:
+                if not member.isfile():
+                    continue
+                rel = member.name.replace("\\", "/")
+                if any(part in SKIP_DIRS for part in Path(rel).parts):
+                    continue
+                stream = archive.extractfile(member)
+                if stream is None:
+                    continue
+                symbols.extend(_symbols_from_data(rel, stream.read(), repo_id))
+    finally:
+        if proc.stdout:
+            proc.stdout.close()
+        stderr = proc.stderr.read() if proc.stderr else b""
+        result = proc.wait()
+    if result:
+        raise CairnError("git_failed", "git archive failed",
+                         details={"stderr": stderr.decode("utf-8", "replace")[:400]})
     symbols.sort(key=lambda item: item["stable_key"])
     return symbols
 
@@ -247,13 +284,19 @@ def historical_files(repo_path: str, repo_id: str,
         rel = parts[-1]
         if rel not in current_paths and rel not in latest:
             latest[rel] = commit
+    specs = [f"{revision}:{rel}" for rel, revision in sorted(latest.items())]
+    checked = subprocess.run(
+        ["git", "-C", repo_path, "cat-file", "--batch-check"],
+        input="\n".join(specs) + "\n", capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120, check=True,
+    ) if specs else None
     out = []
-    for rel, revision in sorted(latest.items()):
-        try:
-            blob = code.git.git(repo_path, "rev-parse",
-                                f"{revision}:{rel}").strip()
-        except CairnError:
+    for (rel, revision), line in zip(sorted(latest.items()),
+                                     checked.stdout.splitlines() if checked else []):
+        parts = line.split()
+        if len(parts) < 3 or parts[1] != "blob":
             continue
+        blob = parts[0]
         address = whole_address(rel)
         key = node_key(repo_id, rel, address)
         out.append({"id": key, "stable_key": key, "language": language_of(rel),
@@ -264,12 +307,13 @@ def historical_files(repo_path: str, repo_id: str,
 
 
 def index(store, repo_id: str, actor: dict, paths: list[str] | None = None,
-          historical: bool = False) -> dict:
+          historical: bool = False, tracked_only: bool = False) -> dict:
     repo = store.read_one("SELECT * FROM repositories WHERE id = ?", (repo_id,))
     if repo is None:
         raise CairnError("not_found", f"репозиторій {repo_id} не зареєстровано", exit_code=1)
-    fresh = discover(repo["path"], repo_id, paths)
-    if paths is None and historical:
+    fresh = (discover_commit(repo["path"], repo_id)
+             if tracked_only and paths is None else discover(repo["path"], repo_id, paths))
+    if historical:
         fresh += historical_files(repo["path"], repo_id,
                                   {item["path"] for item in fresh})
     # Проєкція `code.indexed` видаляє всі символи репозиторію перед вставкою

@@ -212,6 +212,8 @@ def read(path: str | Path, offset: int = 0):
                     yield {"actor": "agent", "kind": "tool_call", "ts": ts,
                            "abs_paths": paths,
                            "operations": [str(changes[p]["type"]) for p in paths],
+                           "patches": [str(changes[p].get("unified_diff") or "")
+                                       for p in paths],
                            "evidence_scope": "file",
                            "session_id": sid, "cwd": cwd,
                            "event_id": str(item.get("id") or f"{sid}:edit:{event_position}"),

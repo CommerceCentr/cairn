@@ -159,10 +159,13 @@ def add_assertion(store, *, subject_id: str, predicate: str, literal=None, actor
 
 
 def relate(store, *, from_id: str, to_id: str, relation: str, actor: dict,
-           condition: dict | None = None, idempotency_key: str | None = None) -> dict:
+           condition: dict | None = None, idempotency_key: str | None = None,
+           con=None) -> dict:
     spec = RELATION_REGISTRY.get(relation)
     if spec is None:
         raise CairnError("unknown_relation", f"зв'язок {relation} не в реєстрі", exit_code=2)
+    if con is not None and spec["blocks"]:
+        raise CairnError("batch_relation_blocked", "blocking relation needs cycle check", exit_code=2)
     if spec["blocks"]:
         _reject_cycle(store, from_id, to_id)
     now = store.now()
@@ -184,7 +187,7 @@ def relate(store, *, from_id: str, to_id: str, relation: str, actor: dict,
         ev = store.append(con, "relation.recorded", from_id, payload, actor, idempotency_key)
         return {"relation": ev["payload"], "event_id": ev["event_id"], "replayed": ev["replayed"]}
 
-    return store.mutate(op)
+    return op(con) if con is not None else store.mutate(op)
 
 
 def accept_object(store, *, object_id: str, actor: dict, rationale: str | None = None) -> dict:

@@ -38,6 +38,7 @@ SCRIPTS = (
     "verify_compaction_link.py",
     "verify_adapter_crud.py",
     "verify_codex_adapter.py",
+    "test_git_content_witness.py",
     "verify_commit_node_scope.py",
     # Нові ворота: підроблений bundle і приватність шляхів.
     "verify_bundle_tamper.py",

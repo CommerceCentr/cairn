@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -288,6 +289,8 @@ def session_object(store, *, session_id: str, compaction: dict,
             "session_id": session_id,
             "compaction_message_id": compaction.get("message_id") or "",
             "compaction_seq": compaction.get("seq"),
+            "source_occurred_at": compaction.get("ts") or "",
+            "account_verification": "unavailable_in_source_journal",
             "keep_id": compaction.get("keep_id") or "",
             "summary_sha256": sha256_text(summary),
             "reason": compaction.get("reason") or "",
@@ -306,7 +309,8 @@ def session_object(store, *, session_id: str, compaction: dict,
 
 def link_mutations(store, *, events: list[dict], session_obj_id: str,
                    repo_id: str, repo_path: str | Path | tuple, actor: dict,
-                   allowed_node_keys: set[str] | None = None) -> dict:
+                   allowed_node_keys: set[str] | None = None,
+                   compact_relations: bool = False) -> dict:
     """Побудувати `caused_by` для кожної завершеної мутації з відомим вузлом.
 
     Повертає звіт: links ( нові ребра), replayed, unresolved (список причин).
@@ -319,6 +323,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
 
     links: list[dict] = []
     all_links: list[dict] = []
+    pending: list[tuple[dict, dict, str]] = []
     replayed = 0
     seen: set[tuple[str, str]] = set()
     ready, unresolved = mutation_readiness(
@@ -364,26 +369,70 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
             if pair in seen:
                 continue
             seen.add(pair)
-            result = semantic.relate(
-                store, from_id=str(node["stable_key"]), to_id=session_obj_id,
-                relation="caused_by", actor=actor,
-                condition={
+            condition = {
                     "basis": "tool_mutation", "evidence_level": "participation",
                     "evidence": evidence,
                     "rationale": rationale or "",
                     "intent_source": evidence["intent_source"],
-                },
-                idempotency_key=f"caused-by:{pair[0]}:{pair[1]}",
-            )
+                }
             link_info = {"event_id": ev["event_id"], "address": node["address"],
                          "stable_key": str(node["stable_key"]),
                          "path": rel, "rationale_chars": len(rationale),
                          "intent_seq": evidence["intent_seq"]}
             all_links.append(link_info)
+            pending.append((link_info, condition,
+                            f"caused-by:{pair[0]}:{pair[1]}"))
+
+    def write_batch(con, batch):
+        nonlocal replayed
+        for link_info, condition, key in batch:
+            result = semantic.relate(
+                store, from_id=link_info["stable_key"], to_id=session_obj_id,
+                relation="caused_by", actor=actor, condition=condition,
+                idempotency_key=key, con=con)
             if result.get("replayed"):
                 replayed += 1
             else:
                 links.append(link_info)
+
+    if compact_relations:
+        grouped: dict[str, list[tuple[dict, dict, str]]] = {}
+        for row in pending:
+            grouped.setdefault(row[0]["stable_key"], []).append(row)
+        for stable_key, rows in grouped.items():
+            recorded = set()
+            for prior in store.read(
+                    "SELECT condition_json FROM relations WHERE from_id = ? "
+                    "AND to_id = ? AND relation_type = 'caused_by'",
+                    (stable_key, session_obj_id)):
+                condition = json.loads(prior["condition_json"] or "{}")
+                for entry in condition.get("events") or [condition]:
+                    evidence = entry.get("evidence") or {}
+                    if evidence.get("event_id"):
+                        recorded.add(str(evidence["event_id"]))
+            rows = [row for row in rows
+                    if str(row[0]["event_id"]) not in recorded]
+            if not rows:
+                replayed += 1
+                continue
+            event_ids = sorted(str(row[0]["event_id"]) for row in rows)
+            digest = sha256_text(canonical(event_ids))[:24]
+            condition = {"basis": "tool_mutations_grouped",
+                         "evidence_level": "participation",
+                         "events": [row[1] for row in rows]}
+            result = semantic.relate(
+                store, from_id=stable_key, to_id=session_obj_id,
+                relation="caused_by", actor=actor, condition=condition,
+                idempotency_key=f"caused-by-group:{session_obj_id}:{stable_key}:{digest}")
+            if result.get("replayed"):
+                replayed += 1
+            else:
+                links.append(rows[0][0])
+    else:
+        for start in range(0, len(pending), 200):
+            batch = pending[start:start + 200]
+            store.mutate(lambda con, batch=batch: write_batch(con, batch),
+                         batch_ledger=True)
     return {"links": links, "all_links": all_links,
             "new": len(links), "replayed": replayed,
             "unresolved": unresolved}
@@ -525,6 +574,7 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
     if not full:
         return {"resolved": "", "mutated": [], "unresolved": ["commit_not_found"]}
     committed_at = git.git(str(repo_path), "show", "-s", "--format=%cI", full).strip()
+    parents = git.git(str(repo_path), "show", "-s", "--format=%P", full).strip().split()
     message = git.git(str(repo_path), "show", "-s", "--format=%B", full).strip()
     status = git.git(str(repo_path), "show", "--name-status", "--format=", full)
     changed = []
@@ -556,7 +606,8 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
         actor=actor, lifecycle="proposed", trust="agent_proposed",
         stable_key=_digest(f"commit:{repo_id}:{full}"),
         idempotency_key=f"commit-fact-obj:v3:{full}",
-        semantic={"kind": "commit_fact", "commit": full,
+        semantic={"kind": "commit_fact", "commit": full, "repo_id": repo_id,
+                  "parents": parents,
                   "committed_at": committed_at, "message": message,
                   "basis": "git_diff"},
         scope=sorted(scope),

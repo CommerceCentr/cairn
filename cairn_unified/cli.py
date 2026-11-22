@@ -207,6 +207,9 @@ def dispatch(args, actor: dict):
         return Store(root).init()
     if group == "project" and cmd == "doctor":
         return Store(root).doctor()
+    if group == "federation" and cmd == "restore":
+        from . import federation
+        return federation.restore_bundle(federation.load_bundle(args.path), args.target, actor)
     store = Store.open(root)
 
     if group == "project":

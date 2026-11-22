@@ -34,7 +34,8 @@ def main() -> int:
         {"timestamp": "2026-11-22T00:00:07Z", "type": "event_msg",
          "payload": {"type": "item_completed", "item": {"id": "edit-1",
                      "type": "FileChange", "status": "completed",
-                     "changes": {"Q:/prj/cairn/a.py": {"type": "update"}}}}},
+                     "changes": {"Q:/prj/cairn/a.py": {
+                         "type": "update", "unified_diff": "@@ -1 +1 @@\n-old\n+new\n"}}}}},
         {"timestamp": "2026-11-22T00:00:08Z", "type": "event_msg",
          "payload": {"type": "item_completed", "item": {"id": "edit-failed",
                      "type": "FileChange", "status": "failed",
@@ -55,6 +56,7 @@ def main() -> int:
     assert events[-2]["summary"] == ""
     assert events[-2]["reason"] == "encrypted_compaction"
     assert events[-1]["evidence_scope"] == "file"
+    assert events[-1]["patch"] == "@@ -1 +1 @@\n-old\n+new\n"
     assert normalize.capabilities(normalize.SOURCE_CODEX)["mutation"].startswith(
         "partial")
     print("ВЕРДИКТ: Codex IDs, user intent, compactions and shell boundary pass")

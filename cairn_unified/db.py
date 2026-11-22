@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS code_symbols (
     precision TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_key ON code_symbols(repo_id, stable_key);
+CREATE INDEX IF NOT EXISTS idx_symbols_path ON code_symbols(repo_id, path);
 CREATE TABLE IF NOT EXISTS code_edges (
     id TEXT PRIMARY KEY,
     repo_id TEXT NOT NULL,

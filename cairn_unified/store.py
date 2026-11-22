@@ -35,6 +35,7 @@ class Store:
         self.cairn = self.root / ".cairn"
         self.db_path = self.cairn / "runtime" / "cairn.sqlite"
         self.correlation_id: str | None = None
+        self._pending_ledger: list[dict] | None = None
 
     def clock(self):
         fn = getattr(self, "_clock", None)
@@ -142,17 +143,26 @@ class Store:
         return {"migrated": True, "from": stored, "to": reader,
                 "backup": str(backup) if backup else None, "integrity": integrity}
 
-    def mutate(self, fn):
+    def mutate(self, fn, *, batch_ledger: bool = False):
         con = self.connect()
         try:
             con.execute("BEGIN IMMEDIATE")
+            if batch_ledger:
+                if self._pending_ledger is not None:
+                    raise CairnError("nested_ledger_batch", "nested ledger batch")
+                self._pending_ledger = []
             try:
                 result = fn(con)
+                if self._pending_ledger is not None:
+                    ledger.append_lines(ledger.ledger_path(self.root), self._pending_ledger)
                 con.execute("COMMIT")
                 return result
             except Exception:
                 con.execute("ROLLBACK")
                 raise
+            finally:
+                if batch_ledger:
+                    self._pending_ledger = None
         finally:
             con.close()
 
@@ -168,7 +178,8 @@ class Store:
         return rows[0] if rows else None
 
     def append(self, con, event_type: str, aggregate_id: str | None, payload: dict,
-               actor: dict, idempotency_key: str | None = None, causation_id: str | None = None) -> dict:
+               actor: dict, idempotency_key: str | None = None, causation_id: str | None = None,
+               occurred_at: str | None = None) -> dict:
         payload = redact_value(payload)
         if idempotency_key:
             prev = con.execute(
@@ -182,7 +193,6 @@ class Store:
         stamp = self.now()
         event_id = prefixed("evt")
         phash = payload_hash(payload)
-        chash = chain_hash(prev_hash, seq, event_id, event_type, phash)
         event = {
             "event_id": event_id,
             "seq": seq,
@@ -190,7 +200,7 @@ class Store:
             "schema_version": SCHEMA_VERSION,
             "aggregate_id": aggregate_id,
             "actor": actor,
-            "occurred_at": stamp,
+            "occurred_at": occurred_at or stamp,
             "recorded_at": stamp,
             "causation_id": causation_id,
             "correlation_id": self.correlation_id,
@@ -198,9 +208,14 @@ class Store:
             "payload": payload,
             "payload_hash": phash,
             "prev_hash": prev_hash,
-            "chain_hash": chash,
+            "integrity_version": 2,
         }
-        ledger.append_line(ledger.ledger_path(self.root), event)
+        chash = chain_hash(prev_hash, seq, event_id, event_type, phash, event)
+        event["chain_hash"] = chash
+        if self._pending_ledger is None:
+            ledger.append_line(ledger.ledger_path(self.root), event)
+        else:
+            self._pending_ledger.append(event)
         con.execute(
             """INSERT INTO events(
                 event_id, seq, event_type, aggregate_id, actor_json, occurred_at, recorded_at,
@@ -208,7 +223,7 @@ class Store:
                 prev_hash, chain_hash)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                event_id, seq, event_type, aggregate_id, canonical(actor), stamp, stamp,
+                event_id, seq, event_type, aggregate_id, canonical(actor), occurred_at or stamp, stamp,
                 causation_id, self.correlation_id, idempotency_key, canonical(payload),
                 phash, prev_hash, chash,
             ),
@@ -262,6 +277,17 @@ class Store:
                 projections.apply(con, ev)
                 self.materialize(ev)
                 applied += 1
+            # Repository paths are device-local. A restored store inside the
+            # same Git repository must point at this checkout, not its source PC.
+            if (self.root / ".git").exists():
+                from .code import git
+                try:
+                    identity = git.identity(self.root)
+                except (CairnError, OSError):
+                    identity = None
+                if identity:
+                    con.execute("UPDATE repositories SET path = ? WHERE id = ?",
+                                (identity["path"], identity["id"]))
             con.execute("COMMIT")
         except Exception:
             con.execute("ROLLBACK")

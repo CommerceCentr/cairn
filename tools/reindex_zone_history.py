@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,9 +22,10 @@ ACTOR = {"kind": "system", "id": "git-history-reindex"}
 
 
 def run(root: Path, repo: Path, *, apply: bool, verify: bool) -> dict:
+    started = time.perf_counter()
     store = Store.open(root)
     identity = code.git.identity(str(repo))
-    commits = [sha for sha in code.git.git(str(repo), "rev-list", "--reverse", "HEAD")
+    commits = [sha for sha in code.git.git(str(repo), "rev-list", "--topo-order", "--reverse", "--all")
                .splitlines() if sha]
     repo_id = identity["id"]
     before = store.read_one(
@@ -33,14 +35,16 @@ def run(root: Path, repo: Path, *, apply: bool, verify: bool) -> dict:
               "before": dict(before) if before else {"symbols": 0, "paths": 0},
               "applied": apply}
     if not apply:
+        report["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         return report
 
     store.mutate(lambda con: store.append(
         con, "repository.upserted", repo_id, identity, ACTOR,
         f"repo:{repo_id}"))
-    report["index"] = nodes.index(store, repo_id, ACTOR, historical=True)
+    report["index"] = nodes.index(store, repo_id, ACTOR, historical=True, tracked_only=True)
+    report["node_index_seconds"] = round(time.perf_counter() - started, 3)
     facts: list[dict] = []
-    for sha in commits:
+    for number, sha in enumerate(commits, 1):
         linked = compaction_link.link_commit(
             store, repo_id=repo_id, repo_path=repo, commit=sha,
             work_id="", actor=ACTOR)
@@ -63,12 +67,15 @@ def run(root: Path, repo: Path, *, apply: bool, verify: bool) -> dict:
             fact["patches_failed"] = [result["object_id"] for result in patch_checks
                                       if not result.get("verified")]
         facts.append(fact)
+        if number % 100 == 0:
+            print(f"indexed {number}/{len(commits)} Git commits", file=sys.stderr, flush=True)
     report["facts"] = facts
     report["new_git_edges"] = sum(item["new_edges"] for item in facts)
     report["patches"] = sum(item["patches"] for item in facts)
     report["deleted_lines"] = sum(item["deleted_lines"] for item in facts)
     report["unresolved_paths"] = sum(len(item["unresolved"]) for item in facts)
     report["doctor_ok"] = store.doctor()["ok"]
+    report["elapsed_seconds"] = round(time.perf_counter() - started, 3)
     return report
 
 

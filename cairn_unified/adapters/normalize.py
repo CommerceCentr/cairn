@@ -123,6 +123,7 @@ def canonical_events(records, *, include_reasoning: bool = True) -> list[dict]:
             tools = list(record.get("operations") or [])
             before = list(record.get("old_strings") or [])
             after = list(record.get("new_strings") or [])
+            patches = list(record.get("patches") or [])
             for position, path in enumerate(paths):
                 out.append({
                     "kind": "mutation",
@@ -134,5 +135,6 @@ def canonical_events(records, *, include_reasoning: bool = True) -> list[dict]:
                     "evidence_scope": record.get("evidence_scope") or "node",
                     "old_string": str(before[position]) if position < len(before) else "",
                     "new_string": str(after[position]) if position < len(after) else "",
+                    "patch": str(patches[position]) if position < len(patches) else "",
                 })
     return out
