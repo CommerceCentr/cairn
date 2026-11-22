@@ -113,6 +113,23 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def patch_lines(diff: str) -> tuple[list[str], list[str]]:
+    """Read changed text only inside Git hunks, preserving prose verbatim."""
+    deleted: list[str] = []
+    added: list[str] = []
+    in_hunk = False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("@@ "):
+            in_hunk = True
+        elif in_hunk and line.startswith("-"):
+            deleted.append(line[1:])
+        elif in_hunk and line.startswith("+"):
+            added.append(line[1:])
+    return deleted, added
+
+
 def _intents(events: list[dict]) -> tuple[list[dict], list[int]]:
     """User-намири, відсортовані за seq, + масив seq для бісекту."""
     ints = sorted((e for e in events if e.get("kind") == "user_intent"),
@@ -137,6 +154,49 @@ def _prior_reasoning(ev: dict, items: list[dict], seqs: list[int]) -> dict | Non
         return None
     i = bisect.bisect_right(seqs, int(ev.get("seq") or 0)) - 1
     return items[i] if i >= 0 else None
+
+
+def matching_commit_content(events: list[dict], repo: str | Path,
+                            commit: str) -> tuple[list[dict], int]:
+    """Keep Claude Edit/Write events whose replacement survives the commit."""
+    try:
+        parent = git.git(str(repo), "rev-parse", f"{commit}^").strip()
+    except CairnError:
+        parent = ""
+    cache: dict[str, tuple[str, str]] = {}
+    kept = []
+    excluded = 0
+    for event in events:
+        if event.get("kind") != "mutation":
+            kept.append(event)
+            continue
+        rel = normalize_path(event.get("path") or "", repo)
+        if not rel:
+            excluded += 1
+            continue
+        if rel not in cache:
+            try:
+                final = git.git(str(repo), "show", f"{commit}:{rel}")
+            except CairnError:
+                final = ""
+            try:
+                before = git.git(str(repo), "show", f"{parent}:{rel}") if parent else ""
+            except CairnError:
+                before = ""
+            cache[rel] = before, final
+        before, final = cache[rel]
+        old = str(event.get("old_string") or "")
+        new = str(event.get("new_string") or "")
+        tool = str(event.get("tool") or "").lower()
+        matched = bool(new and final and (
+            (tool == "edit" and old and old in before
+             and new in final and new not in before)
+            or (tool == "write" and new == final and new != before)))
+        if matched:
+            kept.append(event)
+        else:
+            excluded += 1
+    return kept, excluded
 
 
 def mutation_readiness(store, events: list[dict], repo_id: str,
@@ -166,14 +226,23 @@ def mutation_readiness(store, events: list[dict], repo_id: str,
             unresolved.append({"event_id": ev.get("event_id"),
                                "reason": "node_not_indexed", "path": rel})
             continue
-        if allowed_node_keys is not None:
+        eligible = ([node for node in resolved
+                     if str(node["stable_key"]) in allowed_node_keys]
+                    if allowed_node_keys is not None else resolved)
+        if allowed_node_keys is not None and not eligible:
+            unresolved.append({"event_id": ev.get("event_id"),
+                               "reason": "node_not_changed_in_commit",
+                               "path": rel})
+            continue
+        if ev.get("evidence_scope") == "file":
             resolved = [node for node in resolved
-                        if str(node["stable_key"]) in allowed_node_keys]
+                        if str(node.get("address") or "").startswith("whole:")]
             if not resolved:
                 unresolved.append({"event_id": ev.get("event_id"),
-                                   "reason": "node_not_changed_in_commit",
-                                   "path": rel})
+                                   "reason": "file_node_not_indexed", "path": rel})
                 continue
+        else:
+            resolved = eligible
         ready.append((ev, rel, resolved))
     return ready, unresolved
 
@@ -190,7 +259,8 @@ def session_object(store, *, session_id: str, compaction: dict,
                    opencode_db: str = "", scope: list[str] | None = None,
                    source_kind: str = "opencode",
                    session_source: str = "opencode_db",
-                   source_ref: str = "") -> dict:
+                   source_ref: str = "", source_after: str = "",
+                   commit_scoped: bool = False) -> dict:
     """Створити/отримати session-об'єкт для однієї компактації.
 
     Тотожність — реальний рядок компактації (`message_id`), НЕ SHA коміту.
@@ -201,6 +271,8 @@ def session_object(store, *, session_id: str, compaction: dict,
     """
     summary = compaction.get("summary") or ""
     key = f"ses:{session_id}:cmp:{compaction.get('message_id') or compaction.get('event_id')}"
+    if commit_scoped:
+        key += f":commit:{commit}"
     stable = _digest(key)
     return semantic.put_object(
         store, object_type="session",
@@ -226,6 +298,7 @@ def session_object(store, *, session_id: str, compaction: dict,
             # імʼя (назва файла журналу), щоб було видно, що саме читати.
             "source_kind": source_kind,
             "source_ref": source_ref,
+            "source_after": source_after,
         },
         scope=list(scope or []),
     )["object"]
@@ -245,6 +318,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
     intents, intent_seqs = _intents(events)
 
     links: list[dict] = []
+    all_links: list[dict] = []
     replayed = 0
     seen: set[tuple[str, str]] = set()
     ready, unresolved = mutation_readiness(
@@ -272,6 +346,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
         after = ev.get("new_string") or ""
         evidence = {
             "event_id": ev.get("event_id"), "tool": ev.get("tool"),
+            "evidence_scope": ev.get("evidence_scope") or "node",
             "ts": ev.get("ts"), "path": rel,
             "before_sha256": sha256_text(before) if before else "",
             "after_sha256": sha256_text(after) if after else "",
@@ -300,14 +375,17 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
                 },
                 idempotency_key=f"caused-by:{pair[0]}:{pair[1]}",
             )
+            link_info = {"event_id": ev["event_id"], "address": node["address"],
+                         "stable_key": str(node["stable_key"]),
+                         "path": rel, "rationale_chars": len(rationale),
+                         "intent_seq": evidence["intent_seq"]}
+            all_links.append(link_info)
             if result.get("replayed"):
                 replayed += 1
             else:
-                links.append({"event_id": ev["event_id"], "address": node["address"],
-                              "stable_key": str(node["stable_key"]),
-                              "path": rel, "rationale_chars": len(rationale),
-                              "intent_seq": evidence["intent_seq"]})
-    return {"links": links, "new": len(links), "replayed": replayed,
+                links.append(link_info)
+    return {"links": links, "all_links": all_links,
+            "new": len(links), "replayed": replayed,
             "unresolved": unresolved}
 
 
@@ -315,7 +393,8 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
                       commit: str, repo_id: str, repo_roots: list[str],
                       scope: list[str], opencode_db: str, actor: dict,
                       source_kind: str = "opencode", source_ref: str = "",
-                      mutation_filter: str = "") -> dict:
+                      mutation_filter: str = "", source_until: str = "",
+                      source_after: str = "") -> dict:
     """«Чому відкинуто» — окремий перевірений об'єкт, не тихий лог.
 
     Причини рахуються з того самого класифікатора, що й ребра; верифікатор
@@ -359,6 +438,8 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
             "session_id": str(session_obj["semantic"].get("session_id") or ""),
             "session_obj_id": str(session_obj["id"]),
             "source_kind": source_kind, "source_ref": source_ref,
+            "source_until": source_until,
+            "source_after": source_after,
             "mutation_filter": mutation_filter,
             "repo_roots": list(repo_roots),
             "unresolved_count": len(unresolved),
@@ -392,10 +473,6 @@ def committed_nodes(store, repo_id: str, repo_path: str | Path,
     if is_head is None:
         is_head = git.head(repo_path) == commit
     if not is_head:
-        return whole
-    if git.git(str(repo_path), "status", "--porcelain", "--", path).strip():
-        # The index reads the worktree. Dirty content can move line numbers
-        # away from the committed patch, so only file-level evidence survives.
         return whole
     if git.git(str(repo_path), "status", "--porcelain", "--", path).strip():
         # The index reads the worktree. Dirty content can move line numbers
@@ -447,6 +524,8 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
         return {"resolved": "", "mutated": [], "unresolved": ["git_unavailable"]}
     if not full:
         return {"resolved": "", "mutated": [], "unresolved": ["commit_not_found"]}
+    committed_at = git.git(str(repo_path), "show", "-s", "--format=%cI", full).strip()
+    message = git.git(str(repo_path), "show", "-s", "--format=%B", full).strip()
     status = git.git(str(repo_path), "show", "--name-status", "--format=", full)
     changed = []
     for line in status.splitlines():
@@ -473,14 +552,45 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
     fact = semantic.put_object(
         store, object_type="fact",
         title=f"commit {full[:7]}",
-        summary=f"commit {full[:7]} CrUD: {len(changed)} paths",
+        summary=f"commit {full[:7]} CrUD: {len(changed)} paths; {message}",
         actor=actor, lifecycle="proposed", trust="agent_proposed",
         stable_key=_digest(f"commit:{repo_id}:{full}"),
-        idempotency_key=f"commit-fact-obj:{full}",
-        semantic={"kind": "commit_fact", "commit": full, "basis": "git_diff"},
+        idempotency_key=f"commit-fact-obj:v3:{full}",
+        semantic={"kind": "commit_fact", "commit": full,
+                  "committed_at": committed_at, "message": message,
+                  "basis": "git_diff"},
         scope=sorted(scope),
     )["object"]
     mutated = []
+    patches = []
+    for status_code, path in changed:
+        diff = git.git(str(repo_path), "show", "--format=", "--unified=0",
+                       full, "--", path)
+        if "Binary files " in diff or "GIT binary patch" in diff:
+            continue
+        deleted, added = patch_lines(diff)
+        if not deleted and not added:
+            continue
+        patch = semantic.put_object(
+            store, object_type="fact", title=f"patch {full[:7]} {path}",
+            summary=f"Git diff {full[:7]} {path}: -{len(deleted)} +{len(added)}",
+            actor=actor, lifecycle="proposed", trust="agent_proposed",
+            stable_key=_digest(f"commit-patch:{repo_id}:{full}:{path}"),
+            idempotency_key=f"commit-patch:v1:{repo_id}:{full}:{path}",
+            semantic={"kind": "commit_patch", "commit": full, "repo_id": repo_id,
+                      "path": path, "status": status_code,
+                      "deleted_lines": deleted, "added_lines": added,
+                      "diff_sha256": sha256_text(diff)},
+            scope=[path],
+        )["object"]
+        semantic.relate(
+            store, from_id=fact["id"], to_id=patch["id"],
+            relation="documents_change", actor=actor,
+            condition={"basis": "git_diff", "commit": full, "path": path},
+            idempotency_key=f"commit-patch-link:v1:{repo_id}:{full}:{path}",
+        )
+        patches.append({"path": path, "object_id": patch["id"],
+                        "deleted_lines": len(deleted), "added_lines": len(added)})
     for status_code, path, node in found:
         result = semantic.relate(
             store, from_id=fact["id"], to_id=str(node["stable_key"]),
@@ -492,13 +602,15 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
             mutated.append({"path": path, "address": node["address"],
                             "status": status_code})
     return {"resolved": full, "fact_id": fact["id"], "mutated": mutated,
+            "patches": patches,
             "unresolved": unresolved}
 
 
 def auto_compaction(store, *, events: list[dict], links: list[dict],
                     session_obj: dict, opencode_db: str, actor: dict,
                     commit: str = "", source_kind: str = "opencode",
-                    source_ref: str = "") -> dict:
+                    source_ref: str = "", source_until: str = "",
+                    source_after: str = "", commit_scoped: bool = False) -> dict:
     """Детермінована автокомактація: «чому» дослівно з реальних подій сесії.
 
     НЕ є компактацією opencode.db і не видає себе за неї: окремий
@@ -544,6 +656,7 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
             intent_refs.append({
                 "message_id": str(prior["message_id"]), "seq": prior["seq"],
                 "text_sha256": sha256_text(str(prior.get("text") or "")),
+                "text": str(prior.get("text") or ""),
             })
     # Джерело БЕЗ мутацій (Codex: правки всередині `exec`). Тоді ланцюга
     # «намір -> мутація» не існує, але самі наміри є, і саме вони є «чому».
@@ -558,6 +671,7 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
                 intent_refs.append({
                     "message_id": key, "seq": prior["seq"],
                     "text_sha256": sha256_text(str(prior.get("text") or "")),
+                    "text": str(prior.get("text") or ""),
                 })
     else:
         basis_without_mutations = False
@@ -604,11 +718,14 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
     text = "\n".join(header + chain) + "\n"
 
     stable = _digest(f"auto-cmp:v1.1:{session_id}:{cmp_msg or session_obj['id']}")
+    if commit_scoped:
+        stable = _digest(f"auto-cmp:v1.1:{session_id}:{cmp_msg}:commit:{commit}")
     obj = semantic.put_object(
         store, object_type="decision",
         title=f"автокомактація чому {session_id}",
         summary=text, actor=actor, lifecycle="proposed", trust="agent_proposed",
-        stable_key=stable, idempotency_key=f"auto-cmp:{stable}",
+        stable_key=stable,
+        idempotency_key=f"auto-cmp:v1.4:{stable}:{sha256_text(text)[:16]}",
         semantic={
             "kind": "auto_compaction", "session_id": session_id,
             "session_obj_id": str(session_obj["id"]),
@@ -622,6 +739,8 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
             "chain_shown": len(shown_chain), "chain_total": len(ordered),
             "summary_sha256": sha256_text(text), "source_kind": source_kind,
             "source_ref": source_ref,
+            "source_until": source_until,
+            "source_after": source_after,
             "intent_refs": intent_refs,
             "mutation_event_ids": [str(l["event_id"]) for l in ordered],
             "linked_nodes": len(ordered),

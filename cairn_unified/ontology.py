@@ -28,6 +28,9 @@ RELATION_REGISTRY: dict[str, dict] = {
     #: CrUD-участь коміту в вузлі — окреме твердження, не причинність.
     #: Ставиться тільки з rev-parse-резолвованого `git show --name-status`.
     "mutated": {"effect": "none", "blocks": False},
+    "context_for_commit": {"effect": "none", "blocks": False},
+    "mutation_in_commit": {"effect": "none", "blocks": False},
+    "documents_change": {"effect": "none", "blocks": False},
     "discovered_during": {"effect": "none", "blocks": False},
     "derived_from": {"effect": "none", "blocks": False},
     "supports": {"effect": "none", "blocks": False},

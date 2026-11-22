@@ -204,7 +204,8 @@ def _code(con, event, p):
             (
                 sym["id"], repo, sym["stable_key"], sym["language"], sym["qualified_name"],
                 sym["fingerprint"], sym.get("body_fingerprint") or sym["fingerprint"],
-                p["revision"], sym["path"], _j(sym.get("span") or {}), sym.get("precision") or "structural",
+                sym.get("revision") or p["revision"], sym["path"],
+                _j(sym.get("span") or {}), sym.get("precision") or "structural",
             ),
         )
         obj = {

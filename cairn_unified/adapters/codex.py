@@ -10,19 +10,12 @@ session_meta   supported    session_id, cwd, runtime_workspace_roots
 user_intent    supported    response_item/message, role=user
 compaction     supported    type=compacted: retained_context (message часто "")
 reasoning      UNSUPPORTED  payload.summary порожній, текст у encrypted_content
-mutation       UNSUPPORTED  правки йдуть усередині `exec` як shell-рядки
+mutation       PARTIAL      завершені FileChange; shell-правки не видно
 ```
 
-Про `mutation` окремо, бо це головне обмеження. Codex викликає ОДИН
-інструмент `exec` із JavaScript, усередині якого PowerShell-команди
-(виміряно: 765 викликів `exec` на сесію, жодного `apply_patch`). З рядка
-`Get-Content … ; Set-Content …` вирішити, що саме є CrUD і над яким
-шляхом, можна лише ВГАДУВАННЯМ. Тому адаптер мутацій не віддає й не
-робить вигляду, що віддає: краще порожньо й сказано, ніж вигадано.
-
-Наслідок: причинний ланцюг для Codex тримається на НАМІРАХ і
-КОМПАКТАЦІЇ, а привʼязка до вузлів коду приходить із git (`commit_fact`),
-не з журналу.
+`FileChange` дає структуровану участь у правці файла. Shell-команди
+не інтерпретуються як мутації. Конкретний символ усередині файла цей
+запис не доводить, тому зв'язок ставиться лише на вузол whole:file.
 """
 
 from __future__ import annotations
@@ -40,7 +33,7 @@ CAPABILITIES: dict[str, str] = {
     "user_intent": "supported",
     "compaction": "partial:plaintext_or_encrypted_metadata",
     "reasoning": "unsupported:encrypted_content",
-    "mutation": "unsupported:shell_embedded",
+    "mutation": "partial:completed_file_change",
 }
 
 #: Блоки, які Codex вставляє в user-повідомлення сам. Це НЕ слова людини,
@@ -104,7 +97,7 @@ def discover(root: str | Path | None = None) -> list[str]:
     return [str(p) for p in sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)]
 
 
-def _lines(path: str | Path):
+def _lines(path: str | Path, offset: int = 0):
     """Рядки журналу; `.zst` розпаковується на льоту.
 
     `compression.zstd` є в стандартній бібліотеці з Python 3.14. На старших
@@ -114,8 +107,12 @@ def _lines(path: str | Path):
     path = Path(path)
     if path.suffix != ".zst":
         with path.open(encoding="utf-8", errors="replace") as handle:
+            if offset:
+                handle.seek(offset)
             yield from handle
         return
+    if offset:
+        raise ValueError("compressed Codex journals do not support offsets")
     try:
         from compression import zstd as _zstd
 
@@ -169,8 +166,8 @@ def session_meta(path: str | Path) -> dict:
     return {}
 
 
-def read(path: str | Path):
-    """Сирі події: наміри користувача й компактації. Нічого іншого.
+def read(path: str | Path, offset: int = 0):
+    """Сирі наміри, компактації та завершені структуровані FileChange.
 
     Форма збігається з `adapters/claude_code.py`: `kind`, `ts`, `event_id`,
     `session_id`, `cwd`, плюс `text`. Мутацій тут немає за властивістю
@@ -179,7 +176,8 @@ def read(path: str | Path):
     meta = session_meta(path)
     sid = meta.get("session_id") or Path(path).stem
     cwd = meta.get("cwd") or ""
-    for line_number, line in enumerate(_lines(path), start=1):
+    source_lines = _lines(path, offset) if offset else _lines(path)
+    for line_number, line in enumerate(source_lines, start=1):
         line = line.strip()
         if not line:
             continue
@@ -194,7 +192,31 @@ def read(path: str | Path):
         ordinal = record.get("ordinal")
         # Newer desktop rollouts omit ordinal. The line number is stable in
         # append-only JSONL and prevents several compacted events sharing an id.
-        event_position = ordinal if ordinal is not None else line_number
+        event_position = ordinal if ordinal is not None else (
+            f"{offset}:{line_number}" if offset else line_number)
+
+        # Desktop journals expose completed edits as structured FileChange
+        # items. Shell text and failed items are never mutation evidence.
+        item = payload.get("item") or {}
+        if (record.get("type") == "event_msg"
+                and payload.get("type") == "item_completed"
+                and item.get("type") == "FileChange"
+                and item.get("status") == "completed"):
+            changes = item.get("changes") or {}
+            if isinstance(changes, dict):
+                paths = [p for p, change in changes.items()
+                         if isinstance(p, str) and Path(p).is_absolute()
+                         and isinstance(change, dict)
+                         and change.get("type") in {"add", "update", "delete", "move"}]
+                if paths:
+                    yield {"actor": "agent", "kind": "tool_call", "ts": ts,
+                           "abs_paths": paths,
+                           "operations": [str(changes[p]["type"]) for p in paths],
+                           "evidence_scope": "file",
+                           "session_id": sid, "cwd": cwd,
+                           "event_id": str(item.get("id") or f"{sid}:edit:{event_position}"),
+                           "ordinal": event_position}
+            continue
 
         encrypted_compaction = (
             record.get("type") == "response_item"

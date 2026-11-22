@@ -31,6 +31,14 @@ def main() -> int:
         {"timestamp": "2026-11-22T00:00:06Z", "type": "response_item",
          "payload": {"type": "compaction", "id": "cmp-encrypted",
                      "encrypted_content": "opaque"}},
+        {"timestamp": "2026-11-22T00:00:07Z", "type": "event_msg",
+         "payload": {"type": "item_completed", "item": {"id": "edit-1",
+                     "type": "FileChange", "status": "completed",
+                     "changes": {"Q:/prj/cairn/a.py": {"type": "update"}}}}},
+        {"timestamp": "2026-11-22T00:00:08Z", "type": "event_msg",
+         "payload": {"type": "item_completed", "item": {"id": "edit-failed",
+                     "type": "FileChange", "status": "failed",
+                     "changes": {"Q:/prj/cairn/b.py": {"type": "update"}}}}},
     ]
     original = codex._lines
     codex._lines = lambda _path: iter(json.dumps(row) for row in rows)
@@ -39,15 +47,16 @@ def main() -> int:
         events = normalize.canonical_events(raw)
     finally:
         codex._lines = original
-    assert len(raw) == 4
-    assert len({event["event_id"] for event in raw}) == 4
+    assert len(raw) == 5
+    assert len({event["event_id"] for event in raw}) == 5
     assert [event["kind"] for event in events] == [
-        "user_intent", "compaction", "compaction", "compaction"]
+        "user_intent", "compaction", "compaction", "compaction", "mutation"]
     assert events[0]["text"] == "Actual user intent"
-    assert events[-1]["summary"] == ""
-    assert events[-1]["reason"] == "encrypted_compaction"
+    assert events[-2]["summary"] == ""
+    assert events[-2]["reason"] == "encrypted_compaction"
+    assert events[-1]["evidence_scope"] == "file"
     assert normalize.capabilities(normalize.SOURCE_CODEX)["mutation"].startswith(
-        "unsupported")
+        "partial")
     print("ВЕРДИКТ: Codex IDs, user intent, compactions and shell boundary pass")
     return 0
 

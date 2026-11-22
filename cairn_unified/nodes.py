@@ -230,11 +230,48 @@ def discover(repo_path: str, repo_id: str, paths: list[str] | None = None) -> li
     return symbols
 
 
-def index(store, repo_id: str, actor: dict, paths: list[str] | None = None) -> dict:
+def historical_files(repo_path: str, repo_id: str,
+                     current_paths: set[str]) -> list[dict]:
+    """Whole-file identities for paths that existed in Git but not at HEAD."""
+    history = code.git.git(repo_path, "log", "--all", "--name-status",
+                           "--format=COMMIT:%H", "--diff-filter=AMR")
+    latest: dict[str, str] = {}
+    commit = ""
+    for line in history.splitlines():
+        if line.startswith("COMMIT:"):
+            commit = line[7:].strip()
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2 or not commit:
+            continue
+        rel = parts[-1]
+        if rel not in current_paths and rel not in latest:
+            latest[rel] = commit
+    out = []
+    for rel, revision in sorted(latest.items()):
+        try:
+            blob = code.git.git(repo_path, "rev-parse",
+                                f"{revision}:{rel}").strip()
+        except CairnError:
+            continue
+        address = whole_address(rel)
+        key = node_key(repo_id, rel, address)
+        out.append({"id": key, "stable_key": key, "language": language_of(rel),
+                    "qualified_name": address, "fingerprint": blob,
+                    "body_fingerprint": blob, "precision": "historical_file",
+                    "revision": revision, "path": rel, "span": {}})
+    return out
+
+
+def index(store, repo_id: str, actor: dict, paths: list[str] | None = None,
+          historical: bool = False) -> dict:
     repo = store.read_one("SELECT * FROM repositories WHERE id = ?", (repo_id,))
     if repo is None:
         raise CairnError("not_found", f"репозиторій {repo_id} не зареєстровано", exit_code=1)
     fresh = discover(repo["path"], repo_id, paths)
+    if paths is None and historical:
+        fresh += historical_files(repo["path"], repo_id,
+                                  {item["path"] for item in fresh})
     # Проєкція `code.indexed` видаляє всі символи репозиторію перед вставкою
     # (projections.py:168-169). Частковий `--paths` без злиття стер би решту,
     # тому повертаємо в пейлоад і ті символи, яких ми не переіндексували.
@@ -242,14 +279,17 @@ def index(store, repo_id: str, actor: dict, paths: list[str] | None = None) -> d
         touched = set(paths)
         kept = []
         for row in store.read("SELECT * FROM code_symbols WHERE repo_id = ?", (repo_id,)):
-            if row["path"] in touched:
+            if row["path"] in touched and not (
+                    row["precision"] == "historical_file"
+                    and not (Path(repo["path"]) / row["path"]).exists()):
                 continue
             span = json.loads(row["span_json"] or "{}")
             kept.append({
                 "id": row["stable_key"], "stable_key": row["stable_key"],
                 "language": row["language"], "qualified_name": row["qualified_name"],
                 "fingerprint": row["fingerprint"], "body_fingerprint": row["body_fingerprint"],
-                "precision": row["precision"], "path": row["path"], "span": span,
+                "precision": row["precision"], "path": row["path"],
+                "revision": row["revision"], "span": span,
             })
         symbols = kept + fresh
         symbols.sort(key=lambda item: item["stable_key"])

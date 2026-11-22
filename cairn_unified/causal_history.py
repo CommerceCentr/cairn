@@ -93,6 +93,8 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
     scope = sorted(set(addresses) | set(stable_keys))
 
     events = list(opencode.read(opencode_db, session_id))
+    commit_events = [event for event in events
+                     if event.get("ts") and int(event["ts"]) <= commit_ms]
     committed_keys = compaction_link.committed_node_keys(
         store, repo_id, repo_path, full, [path for _status, path in changed])
     anchor, anchor_before = _anchor(events, commit_ms)
@@ -105,19 +107,41 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
         actor=actor, commit=full, opencode_db=opencode_db, scope=scope)
     roots = (Path(repo_path), *[Path(r) for r in repo_roots])
     mutations = compaction_link.link_mutations(
-        store, events=events, session_obj_id=session_obj["id"], repo_id=repo_id,
+        store, events=commit_events, session_obj_id=session_obj["id"], repo_id=repo_id,
         repo_path=roots, actor=actor, allowed_node_keys=committed_keys)
     rejected = compaction_link.unresolved_object(
         store, unresolved=mutations["unresolved"], session_obj=session_obj,
         commit=full, repo_id=repo_id, repo_roots=[str(r) for r in roots],
         scope=scope, opencode_db=opencode_db, actor=actor,
-        mutation_filter="committed_nodes")
+        mutation_filter="committed_nodes", source_until=str(commit_ms))
     commit_link = compaction_link.link_commit(
         store, repo_id=repo_id, repo_path=repo_path, commit=full,
         work_id=work_id, actor=actor)
+    if commit_link.get("fact_id"):
+        semantic.relate(
+            store, from_id=session_obj["id"], to_id=commit_link["fact_id"],
+            relation="context_for_commit", actor=actor,
+            condition={"basis": "explicit_session_commit_link",
+                       "evidence_level": "association", "commit": full,
+                       "source_kind": "opencode", "commit_time_ms": commit_ms},
+            idempotency_key=f"session-commit:{session_obj['id']}:{full}")
+        for mutation in mutations["all_links"]:
+            semantic.relate(
+                store, from_id=session_obj["id"], to_id=commit_link["fact_id"],
+                relation="mutation_in_commit", actor=actor,
+                condition={"basis": "structured_mutation_and_git_path",
+                           "evidence_level": "participation",
+                           "event_id": mutation["event_id"],
+                           "node_key": mutation["stable_key"],
+                           "path": mutation["path"], "commit": full,
+                           "source_kind": "opencode"},
+                idempotency_key=(f"mutation-commit:{full}:"
+                                 f"{session_obj['id']}:{mutation['event_id']}:"
+                                 f"{mutation['stable_key']}"))
     auto = compaction_link.auto_compaction(
-        store, events=events, links=mutations["links"], session_obj=session_obj,
-        opencode_db=opencode_db, actor=actor, commit=full)
+        store, events=commit_events, links=mutations["all_links"], session_obj=session_obj,
+        opencode_db=opencode_db, actor=actor, commit=full,
+        source_until=str(commit_ms))
 
     # Було: дефолтна зона з іменем "cairn" і маскою "*.py" — назва ЦЬОГО
     # репозиторію в загальному модулі. Тепер зона береться з імені теки

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from cairn_unified import nodes
 from cairn_unified.code import git
-from cairn_unified.compaction_link import committed_nodes
+from cairn_unified.compaction_link import committed_nodes, mutation_readiness
 from cairn_unified.store import Store
 
 
@@ -48,6 +48,13 @@ def main() -> int:
         addresses = {item["address"] for item in selected}
         assert "function:sample.changed" in addresses, addresses
         assert "function:sample.untouched" not in addresses, addresses
+        ready, rejected = mutation_readiness(
+            store, [{"kind": "mutation", "event_id": "file-change-1",
+                     "status": "completed", "path": str(source),
+                     "evidence_scope": "file"}], ident["id"], repo,
+            {item["stable_key"] for item in selected})
+        assert not rejected and len(ready) == 1, rejected
+        assert [node["address"] for node in ready[0][2]] == ["whole:sample.py"]
         source.write_text("\n" + source.read_text())
         dirty = committed_nodes(store, ident["id"], repo, git.head(repo),
                                 "sample.py")

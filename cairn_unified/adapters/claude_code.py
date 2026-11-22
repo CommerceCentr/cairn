@@ -131,6 +131,8 @@ def read(path: str, offset: int = 0):
 
             found: list[str] = []
             operations: list[str] = []
+            before_values: list[str] = []
+            after_values: list[str] = []
             saw_tool = False
             if isinstance(content, list):
                 for blk in content:
@@ -148,13 +150,17 @@ def read(path: str, offset: int = 0):
                         if isinstance(v, str) and v:
                             found.append(v)
                             operations.append(str(name))
+                            before_values.append(str(inp.get("old_string") or ""))
+                            after_values.append(str(inp.get("new_string") or
+                                                    inp.get("content") or ""))
 
             text = _text_of(rec)
 
             if found:
                 yield {"actor": "tool", "kind": "tool_call", "ts": ts,
                        "abs_paths": found, "session_id": sid, "cwd": cwd,
-                       "event_id": eid, "operations": operations}
+                       "event_id": eid, "operations": operations,
+                       "old_strings": before_values, "new_strings": after_values}
             elif saw_tool:
                 # Інструмент був, але не мутація. Подія лишається, шляхів
                 # немає: збирач відкине її як баласт, не зробивши вигляду,

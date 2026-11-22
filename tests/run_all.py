@@ -42,6 +42,7 @@ SCRIPTS = (
     # Нові ворота: підроблений bundle і приватність шляхів.
     "verify_bundle_tamper.py",
     "verify_why.py",
+    "verify_zone_causality.py",
     "verify_normalize.py",
     "verify_sources.py",
     "verify_surfaces.py",

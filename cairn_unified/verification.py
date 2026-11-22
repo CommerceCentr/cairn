@@ -102,6 +102,11 @@ def _source_gives_mutations(sem: dict) -> bool:
     return not str(state).startswith("unsupported")
 
 
+def _session_has_mutations(sem: dict) -> bool:
+    events, _path, failure = _source_events(sem)
+    return bool(failure or any(event.get("kind") == "mutation" for event in events))
+
+
 def _journal_path(source_kind: str, source_ref: str) -> str:
     """Знайти журнал за ВІДНОСНИМ імʼям. Абсолютних шляхів у обʼєктах немає."""
     if not source_ref:
@@ -136,8 +141,16 @@ def _source_events(sem: dict, *, opencode_db: str | None = None) -> tuple[list, 
         try:
             from .adapters import opencode
 
-            return (list(opencode.read(path, str(sem.get("session_id") or "") or None)),
-                    path, "")
+            events = list(opencode.read(path, str(sem.get("session_id") or "") or None))
+            cutoff = str(sem.get("source_until") or "")
+            if cutoff:
+                events = [event for event in events if event.get("ts")
+                          and int(event["ts"]) <= int(cutoff)]
+            after = str(sem.get("source_after") or "")
+            if after:
+                events = [event for event in events if event.get("ts")
+                          and int(event["ts"]) > int(after)]
+            return events, path, ""
         except Exception as exc:                  # noqa: BLE001 — класифікуємо
             return [], path, _source_failure(path, exc, "session")
 
@@ -151,7 +164,24 @@ def _source_events(sem: dict, *, opencode_db: str | None = None) -> tuple[list, 
             from .adapters import claude_code as reader
         else:
             from .adapters import codex as reader
-        return normalize.canonical_events(reader.read(path)), path, ""
+        events = normalize.canonical_events(reader.read(path))
+        cutoff = str(sem.get("source_until") or "")
+        if cutoff:
+            from datetime import datetime
+
+            boundary = datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+            events = [event for event in events if event.get("ts") and
+                      datetime.fromisoformat(str(event["ts"]).replace("Z", "+00:00"))
+                      <= boundary]
+        after = str(sem.get("source_after") or "")
+        if after:
+            from datetime import datetime
+
+            boundary = datetime.fromisoformat(after.replace("Z", "+00:00"))
+            events = [event for event in events if event.get("ts") and
+                      datetime.fromisoformat(str(event["ts"]).replace("Z", "+00:00"))
+                      > boundary]
+        return events, path, ""
     except Exception as exc:                      # noqa: BLE001 — класифікуємо
         return [], path, _source_failure(path, exc, "session")
 
@@ -165,14 +195,20 @@ def _verify_intents(sem: dict, events: list, checks: list, reasons: list) -> Non
     refs = sem.get("intent_refs") or []
     if not refs:
         return
-    live = {str(event.get("message_id")): str(event.get("text") or "")
-            for event in events if event.get("kind") == "user_intent"}
+    live = {}
+    for event in events:
+        if event.get("kind") == "user_intent":
+            live.setdefault(str(event.get("message_id")), set()).add(
+                str(event.get("text") or ""))
     matched = changed = absent = 0
     for ref in refs:
-        text = live.get(str(ref.get("message_id")))
-        if text is None:
+        texts = live.get(str(ref.get("message_id")))
+        # Persisted prose may be privacy-redacted; the source digest is
+        # checked against the journal, not against the redacted display text.
+        if texts is None:
             absent += 1
-        elif sha256_text(text) == str(ref.get("text_sha256") or ""):
+        elif any(sha256_text(text) == str(ref.get("text_sha256") or "")
+                 for text in texts):
             matched += 1
         else:
             changed += 1
@@ -226,6 +262,25 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         else:
             reasons.append("unresolved:base_revision_not_found" if base_revision_only
                            else "unresolved:commit_not_found")
+
+    if sem.get("kind") == "commit_patch" and repo_path and commit:
+        path = str(sem.get("path") or "")
+        try:
+            diff = git.git(str(repo_path), "show", "--format=", "--unified=0",
+                           commit, "--", path)
+            from .compaction_link import patch_lines
+            from .redact import redact_value
+            deleted, added = patch_lines(diff)
+            safe_lines = redact_value({"deleted_lines": deleted,
+                                       "added_lines": added})
+            if (sha256_text(diff) == sem.get("diff_sha256")
+                    and safe_lines["deleted_lines"] == (sem.get("deleted_lines") or [])
+                    and safe_lines["added_lines"] == (sem.get("added_lines") or [])):
+                checks.append({"check": "commit_patch_matches_git", "value": path})
+            else:
+                reasons.append("unresolved:commit_patch_mismatch")
+        except Exception:
+            reasons.append("unresolved:commit_patch_unavailable")
 
     if sem.get("kind") == "compaction":
         pack_name = sem.get("pack") or ""
@@ -335,7 +390,7 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             if failure:
                 raise RuntimeError(failure)
             allowed = None
-            if sem.get("mutation_filter") == "committed_nodes":
+            if sem.get("mutation_filter") in {"committed_nodes", "committed_nodes_strict_content"}:
                 roots = tuple(sem.get("repo_roots") or ())
                 if not roots:
                     raise RuntimeError("missing_repo_root_for_commit_filter")
@@ -346,6 +401,9 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                 allowed = compaction_link.committed_node_keys(
                     store, str(sem.get("repo_id") or ""), roots[0], commit,
                     changed)
+                if sem.get("mutation_filter") == "committed_nodes_strict_content":
+                    events, _excluded = compaction_link.matching_commit_content(
+                        events, roots[0], commit)
             _ready, recomputed = compaction_link.mutation_readiness(
                 store, events, str(sem.get("repo_id") or ""),
                 tuple(sem.get("repo_roots") or ()), allowed)
@@ -555,6 +613,10 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
     addresses += [str(x) for x in (sem.get("node_refs") or [])]
     if sem.get("node_address"):
         addresses.append(str(sem["node_address"]))
+    if sem.get("kind") == "commit_patch":
+        # The patch itself is checked against Git above. Its path may have
+        # been deleted and cannot always resolve to a current code symbol.
+        addresses = []
     # Сесія не має одного scope: вона пов'язана з багатьма вузлами ребрами
     # `caused_by`, і кожне ребро вже перевірено через nodes.resolve на момент
     # створення. Тому для сесії перевіряємо наявність хоча б одного такого
@@ -571,20 +633,20 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             checks.append({"check": "session_has_indexed_node",
                            "value": str(linked["from_id"])[:40]})
             addresses = [str(linked["from_id"])]
-        elif not _source_gives_mutations(sem):
-            checks.append({"check": "node_link_unsupported_by_source",
+        elif not _source_gives_mutations(sem) or not _session_has_mutations(sem):
+            checks.append({"check": "no_structured_mutations_in_session",
                            "value": str(sem.get("source_kind"))})
         else:
             reasons.append("unresolved:session_no_indexed_node")
     if not addresses:
         # dup: злиття прив'язане до git-хешів (гілка merge_context), а не до
         # одного вузла індексу; вимагати scope тут було б хибною перевіркою.
-        if sem.get("kind") in {"session", "merge_context"} | NOT_CODE_BOUND:
+        if sem.get("kind") in {"session", "merge_context", "commit_patch"} | NOT_CODE_BOUND:
             pass
-        elif not _source_gives_mutations(sem):
+        elif not _source_gives_mutations(sem) or not _session_has_mutations(sem):
             # Не «не встановлено», а «джерело такого не дає». Лагодити
             # нічого: у Codex правки живуть у shell-рядках усередині `exec`.
-            checks.append({"check": "node_link_unsupported_by_source",
+            checks.append({"check": "no_structured_mutations_in_session",
                            "value": str(sem.get("source_kind"))})
         else:
             reasons.append("unresolved:node_absent")

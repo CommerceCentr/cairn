@@ -202,7 +202,7 @@ def main() -> int:
         cx_checks, cx_reasons = verification.check_object(store, cx["auto"], repo_path=repo)
         cx_names = {c["check"] for c in cx_checks}
         checks.append(("Codex: межа джерела названа окремо",
-                       "node_link_unsupported_by_source" in cx_names,
+                       "no_structured_mutations_in_session" in cx_names,
                        str(sorted(cx_names))[:60]))
         checks.append(("Codex: межа НЕ подана як unresolved",
                        not any("node_absent" in r for r in cx_reasons), str(cx_reasons)))

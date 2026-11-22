@@ -127,6 +127,13 @@ def main() -> int:
             store, events=events, session_obj_id=s_obj["id"], repo_id=repo_id,
             repo_path=ROOTS, actor=ACTOR,
         )
+        replay = compaction_link.link_mutations(
+            store, events=events, session_obj_id=s_obj["id"], repo_id=repo_id,
+            repo_path=ROOTS, actor=ACTOR,
+        )
+        checks.append(("повторний імпорт не додає ребер", replay["new"] == 0))
+        checks.append(("повторний імпорт зберігає всі ланки",
+                       replay["all_links"] == result["all_links"]))
         rels = _rels(store)
         caused = [r for r in rels if r["relation_type"] == "caused_by"
                   and r["to_id"] == s_obj["id"]]

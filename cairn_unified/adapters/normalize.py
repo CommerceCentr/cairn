@@ -56,7 +56,7 @@ CAPABILITIES: dict[str, dict[str, str]] = {
         "user_intent": "supported",
         "compaction": "partial:plaintext_or_encrypted_metadata",
         "reasoning": "unsupported:encrypted_content",
-        "mutation": "unsupported:shell_embedded",
+        "mutation": "partial:completed_file_change",
     },
 }
 
@@ -121,6 +121,8 @@ def canonical_events(records, *, include_reasoning: bool = True) -> list[dict]:
         if kind == "tool_call":
             paths = list(record.get("abs_paths") or [])
             tools = list(record.get("operations") or [])
+            before = list(record.get("old_strings") or [])
+            after = list(record.get("new_strings") or [])
             for position, path in enumerate(paths):
                 out.append({
                     "kind": "mutation",
@@ -129,5 +131,8 @@ def canonical_events(records, *, include_reasoning: bool = True) -> list[dict]:
                     "seq": seq, "ts": ts, "status": "completed",
                     "path": str(path),
                     "tool": str(tools[position]) if position < len(tools) else "edit",
+                    "evidence_scope": record.get("evidence_scope") or "node",
+                    "old_string": str(before[position]) if position < len(before) else "",
+                    "new_string": str(after[position]) if position < len(after) else "",
                 })
     return out

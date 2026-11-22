@@ -11,7 +11,7 @@
 
 ```text
 claude_code  наміри + компактації + мутації (лише Write/Edit)
-codex        наміри + компактації; мутацій НЕМА (правки всередині `exec`)
+codex        наміри + компактації + завершені FileChange
 ```
 
 Матриця лежить у `adapters/normalize.CAPABILITIES` і потрапляє у
@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,7 +91,8 @@ def find_journal(repo: Path, source: str) -> Path:
     return max(named, key=lambda p: p.stat().st_mtime)
 
 
-def session_descriptor(events: list[dict], journal: Path) -> dict:
+def session_descriptor(events: list[dict], journal: Path,
+                       commit_time: str = "") -> dict:
     """Опис сесії як обʼєкта, коли компактації агента НЕМАЄ.
 
     Важливо: ми НЕ вигадуємо компактацію. Якщо агент її не робив, у журналі
@@ -100,9 +102,16 @@ def session_descriptor(events: list[dict], journal: Path) -> dict:
     """
     compactions = [e for e in events if e["kind"] == "compaction"]
     if compactions:
-        last = compactions[-1]
-        return {"summary": last["summary"], "message_id": last["message_id"],
-                "seq": last["seq"], "keep_id": last.get("keep_id", ""),
+        if commit_time:
+            boundary = datetime.fromisoformat(commit_time.replace("Z", "+00:00"))
+            after = [event for event in compactions if event.get("ts") and
+                     datetime.fromisoformat(str(event["ts"]).replace("Z", "+00:00"))
+                     >= boundary]
+            selected = after[0] if after else compactions[-1]
+        else:
+            selected = compactions[-1]
+        return {"summary": selected["summary"], "message_id": selected["message_id"],
+                "seq": selected["seq"], "keep_id": selected.get("keep_id", ""),
                 "reason": "agent_compaction"}
     stamps = [e["ts"] for e in events if e.get("ts")]
     counts: dict[str, int] = {}
@@ -126,16 +135,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", choices=sorted(READERS), default="claude_code")
     parser.add_argument("--journal", default=None)
     parser.add_argument("--work", default=None, help="назва задачі-якоря")
-    parser.add_argument("--actor", default="human:local")
+    parser.add_argument("--actor", default=None)
     parser.add_argument("--verify", action="store_true",
                         help="перечитати джерела й підняти довіру, якщо зійшлося")
     parser.add_argument("--index-all", action="store_true",
                         help="індексувати весь репозиторій, не лише змінені шляхи")
+    parser.add_argument("--after-commit", default=None,
+                        help="нижня межа для давнішої сесії, чиї правки увійшли в пізніший коміт")
+    parser.add_argument("--strict-content", action="store_true",
+                        help="Claude Edit/Write: звірити текст правки з батьком і комітом")
     args = parser.parse_args(argv)
+    if args.strict_content and args.source != "claude_code":
+        parser.error("--strict-content підтримує лише Claude Code Edit/Write")
 
     root = Path(args.root).resolve()
     repo = Path(args.repo).resolve()
-    actor = parse_actor(args.actor)
+    actor = parse_actor(args.actor or f"agent:{args.source}")
     reader = READERS[args.source]
     journal = Path(args.journal) if args.journal else find_journal(repo, args.source)
     if args.source == "codex" and args.journal:
@@ -162,14 +177,41 @@ def main(argv: list[str] | None = None) -> int:
                           paths=None if args.index_all else changed)
 
     events = normalize.canonical_events(reader.read(str(journal)))
+    commit_time = code.git.git(str(repo), "show", "-s", "--format=%cI", full).strip()
+    cutoff = datetime.fromisoformat(commit_time.replace("Z", "+00:00"))
+    after_time = (code.git.git(str(repo), "show", "-s", "--format=%cI",
+                               args.after_commit).strip()
+                  if args.after_commit else "")
+    lower = datetime.fromisoformat(after_time.replace("Z", "+00:00")) if after_time else None
+    commit_events = [event for event in events
+                     if event.get("ts") and datetime.fromisoformat(
+                         str(event["ts"]).replace("Z", "+00:00")) <= cutoff
+                     and (lower is None or datetime.fromisoformat(
+                         str(event["ts"]).replace("Z", "+00:00")) > lower)]
+    strict_excluded = 0
+    if args.strict_content:
+        commit_events, strict_excluded = compaction_link.matching_commit_content(
+            commit_events, repo, full)
     committed_keys = compaction_link.committed_node_keys(
         store, repo_id, repo, full, changed)
     ready, unresolved = compaction_link.mutation_readiness(
-        store, events, repo_id, (str(repo),), committed_keys)
+        store, commit_events, repo_id, (str(repo),), committed_keys)
 
-    descriptor = session_descriptor(events, journal)
+    descriptor_events = ([event for event in events if event.get("ts") and
+                          (lower is None or datetime.fromisoformat(
+                              str(event["ts"]).replace("Z", "+00:00")) > lower)]
+                         if lower else events)
+    descriptor = session_descriptor(descriptor_events, journal, commit_time)
     session_id = next((e.get("session_id") for e in reader.read(str(journal))
                        if e.get("session_id")), journal.stem)
+    existing_sessions = [json.loads(row["payload_json"])
+                         for row in store.read("SELECT payload_json FROM objects")]
+    commit_scoped = bool(after_time) or any(
+        (body.get("semantic") or {}).get("kind") == "session"
+        and (body.get("semantic") or {}).get("session_id") == session_id
+        and (body.get("semantic") or {}).get("compaction_message_id") == descriptor["message_id"]
+        and (body.get("semantic") or {}).get("commit") != full
+        for body in existing_sessions)
     # A journal without structured mutations (notably Codex) still belongs
     # in the chronology of nodes touched by the explicitly supplied commit.
     # Scope is discoverability, not a caused_by assertion: that relation is
@@ -188,10 +230,11 @@ def main(argv: list[str] | None = None) -> int:
         actor=actor, commit=full, scope=scope,
         source_kind=SOURCE_KINDS[args.source],
         session_source=SOURCE_KINDS[args.source], source_ref=journal.name,
+        source_after=after_time, commit_scoped=commit_scoped,
     )
 
     linked = compaction_link.link_mutations(
-        store, events=events, session_obj_id=session_obj["id"],
+        store, events=commit_events, session_obj_id=session_obj["id"],
         repo_id=repo_id, repo_path=(str(repo),), actor=actor,
         allowed_node_keys=committed_keys)
 
@@ -199,16 +242,43 @@ def main(argv: list[str] | None = None) -> int:
         store, unresolved=linked["unresolved"], session_obj=session_obj,
         commit=full, repo_id=repo_id, repo_roots=[str(repo)], scope=scope,
         opencode_db="", actor=actor, source_kind=SOURCE_KINDS[args.source],
-        source_ref=journal.name, mutation_filter="committed_nodes")
+        source_ref=journal.name,
+        mutation_filter=("committed_nodes_strict_content" if args.strict_content
+                         else "committed_nodes"),
+        source_until=commit_time, source_after=after_time)
 
     commit_link = compaction_link.link_commit(
         store, repo_id=repo_id, repo_path=repo, commit=full,
         work_id=session_obj["id"], actor=actor)
+    if commit_link.get("fact_id"):
+        semantic.relate(
+            store, from_id=session_obj["id"], to_id=commit_link["fact_id"],
+            relation="context_for_commit", actor=actor,
+            condition={"basis": "explicit_session_commit_link",
+                       "evidence_level": "association", "commit": full,
+                       "source_kind": SOURCE_KINDS[args.source],
+                       "source_ref": journal.name, "commit_time": commit_time},
+            idempotency_key=f"session-commit:{session_obj['id']}:{full}")
+        for mutation in linked["all_links"]:
+            semantic.relate(
+                store, from_id=session_obj["id"], to_id=commit_link["fact_id"],
+                relation="mutation_in_commit", actor=actor,
+                condition={"basis": "structured_mutation_and_git_path",
+                           "evidence_level": "participation",
+                           "event_id": mutation["event_id"],
+                           "node_key": mutation["stable_key"],
+                           "path": mutation["path"], "commit": full,
+                           "source_kind": SOURCE_KINDS[args.source]},
+                idempotency_key=(f"mutation-commit:{full}:"
+                                 f"{session_obj['id']}:{mutation['event_id']}:"
+                                 f"{mutation['stable_key']}"))
 
     auto = compaction_link.auto_compaction(
-        store, events=events, links=linked["links"], session_obj=session_obj,
+        store, events=commit_events, links=linked["all_links"], session_obj=session_obj,
         opencode_db="", actor=actor, commit=full,
-        source_kind=SOURCE_KINDS[args.source], source_ref=journal.name)
+        source_kind=SOURCE_KINDS[args.source], source_ref=journal.name,
+        source_until=commit_time, source_after=after_time,
+        commit_scoped=commit_scoped)
 
     # Автоперевірка: кожен обʼєкт перечитує СВОЄ джерело (журнал, git) і
     # піднімається до `verified_system` лише якщо зійшлося. Без неї всі
@@ -245,6 +315,9 @@ def main(argv: list[str] | None = None) -> int:
         "session_id": str(session_id),
         "repo_id": repo_id,
         "commit": full,
+        "source_after": after_time,
+        "strict_content_excluded": strict_excluded,
+        "commit_scoped_session": commit_scoped,
         "commit_changed_paths": len(changed),
         "nodes_indexed": indexed.get("symbols") if isinstance(indexed, dict) else None,
         "events_canonical": len(events),
@@ -274,8 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         "escalated": {oid: res.get("reasons") for oid, res in verified.items()
                       if not res.get("verified")},
         "boundary": (
-            "Codex не видає структурованих мутацій; зв'язок із кодом "
-            "походить із Git-фактів" if args.source == "codex" else
+            "Codex FileChange доводить участь у файлі; Git доводить "
+            "склад коміту; shell-правки лишаються без сесійного доказу"
+            if args.source == "codex" else
             "мутацією вважається лише Write/Edit; правки через shell "
             "журнал структурованою мутацією не фіксує"
         ),
