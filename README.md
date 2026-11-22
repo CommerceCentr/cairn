@@ -101,6 +101,9 @@ Use these names in the commands below:
    python -m cairn_unified --root <ROOT> why node <relative/path> --repo-path <REPO>
    ```
 
+   The default response is a compact overview of commits, reasons, and evidence limits.
+   Add `--full` for complete edits, deleted lines, and provenance.
+
 2. **After a completed edit, commit, or session compaction**, sync from
    `<CAIRN>`. Initialize the store once if needed. Add each available
    worktree as another `--source-repo`; omit it if there is only one.

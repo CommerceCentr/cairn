@@ -750,7 +750,8 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
            address: str | None = None, commit: str | None = None,
            as_of: str | None = None, budget_chars: int | None = None,
            chronology: bool = True, intent_text: bool = False,
-           opencode_db: str | None = None, repo_path: str | None = None) -> dict:
+           opencode_db: str | None = None, repo_path: str | None = None,
+           compact: bool = False) -> dict:
     """Шість полів: answer, chronology, provenance, trust, omissions, cost."""
     from . import nodes
 
@@ -852,6 +853,7 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         groups = {kind: [body for body in items if body.get("id") in bodies]
                   for kind, items in groups.items()}
         chrono = [item for item in chrono if item["object_id"] in bodies]
+    chrono = _fold_chronology(chrono)
     history = _commit_history(
         store, groups.get("commit_fact") or [], bodies, query_keys)
     archive_history = _archive_commit_history(store, repo_id, path)
@@ -1023,6 +1025,9 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         },
         "boundary": "участь у часі й шляху, не семантична причина",
     }
+    _share_repeated_intents(body)
+    if compact:
+        body = _compact_answer(body)
     if budget_chars:
         body = _apply_budget(body, budget_chars)
     serialized = json.dumps(body, ensure_ascii=False)
@@ -1039,6 +1044,80 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
 
 def _size(body: dict) -> int:
     return len(json.dumps(body, ensure_ascii=False))
+
+
+def _share_repeated_intents(body: dict) -> None:
+    """Keep each repeated intent once while retaining exact text by reference."""
+    import hashlib
+
+    catalog: dict[str, str] = {}
+    changes = [*body.get("why_detail", [])]
+    for commit in body.get("commit_history", []):
+        changes.extend(commit.get("node_changes") or [])
+    for change in changes:
+        value = change.get("intent")
+        if not isinstance(value, str) or not value:
+            continue
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        catalog[digest] = value
+        change.pop("intent")
+        change["intent_ref"] = digest
+    if catalog:
+        body["intent_catalog"] = catalog
+
+
+def _fold_chronology(items: list[dict]) -> list[dict]:
+    """One displayed relation per object and direction; retain edge count."""
+    folded: dict[tuple[str, str, str, str], dict] = {}
+    for item in items:
+        key = (str(item.get("object_id")), str(item.get("relation")),
+               str(item.get("direction")), str(item.get("via")))
+        if key in folded:
+            folded[key]["count"] += int(item.get("count") or 1)
+        else:
+            folded[key] = dict(item)
+    return list(folded.values())
+
+
+def _compact_answer(body: dict) -> dict:
+    """CLI overview; the full graph and deleted patch remain available."""
+    out = dict(body)
+    out["commit_history"] = [{
+        "commit": item["commit"], "committed_at": item.get("committed_at"),
+        "message": (item.get("message") or "").splitlines()[0],
+        "evidence": item.get("evidence"),
+        "direct_mutations": item.get("direct_mutations", 0),
+        "agent_sources": sorted({str(s.get("source_kind"))
+                                 for s in item.get("sessions") or []}),
+        "deleted_lines": sum(len(p.get("deleted_lines") or [])
+                             for p in item.get("patches") or []),
+    } for item in body.get("commit_history") or []]
+    detail = body.get("why_detail") or []
+    unique: dict[tuple[str, str, str], dict] = {}
+    for item in detail:
+        key = (str(item.get("intent_ref") or ""),
+               str(item.get("motive") or item.get("text") or ""),
+               str(item.get("motive_source") or ""))
+        if key not in unique:
+            unique[key] = {k: item.get(k) for k in
+                           ("kind", "intent_ref", "motive", "motive_source",
+                            "evidence_level", "text") if item.get(k)}
+            unique[key]["occurrences"] = 0
+        unique[key]["occurrences"] += 1
+    out["why_detail"] = list(unique.values())[:8]
+    used = {item.get("intent_ref") for item in out["why_detail"]}
+    out["intent_catalog"] = {key: value for key, value in
+                             (body.get("intent_catalog") or {}).items() if key in used}
+    out["provenance"] = []
+    out["trust"] = {"objects": len(body.get("trust") or []),
+                    "classes": sorted({str(item.get("trust_class"))
+                                       for item in body.get("trust") or []})}
+    out["omissions"] = [*body.get("omissions", []), {
+        "kind": "compact_view", "object_id": None,
+        "reason": (f"показано {len(out['why_detail'])} із {len(unique)} різних "
+                   "пояснень; повні докази й вилучені рядки: --full"),
+    }]
+    return out
 
 
 def _apply_budget(body: dict, budget_chars: int) -> dict:

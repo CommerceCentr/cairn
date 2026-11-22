@@ -193,6 +193,8 @@ def build_parser() -> argparse.ArgumentParser:
     cw.add_argument("--commit", default=None)
     cw.add_argument("--as-of", dest="as_of", default=None)
     cw.add_argument("--budget", type=int, default=None, help="символів, не токенів")
+    cw.add_argument("--full", action="store_true",
+                    help="повні докази, тексти правок і походження без стислого огляду")
     cw.add_argument("--no-chronology", dest="chronology", action="store_false")
     cw.add_argument("--intent-text", dest="intent_text", action="store_true",
                     help="дочитати текст намірів із джерела, звіривши sha256")
@@ -429,7 +431,7 @@ def dispatch(args, actor: dict):
             address=args.address, commit=args.commit, as_of=args.as_of,
             budget_chars=args.budget, chronology=args.chronology,
             intent_text=args.intent_text, opencode_db=args.opencode_db,
-            repo_path=args.repo_path,
+            repo_path=args.repo_path, compact=not args.full,
         )
 
     if group == "mcp":

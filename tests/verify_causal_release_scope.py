@@ -23,6 +23,33 @@ ACTOR = {"kind": "system", "id": "scope-test"}
 
 
 def main() -> int:
+    repeated = {"why_detail": [{"event_id": "a", "intent": "same intent"},
+                               {"event_id": "b", "intent": "same intent"}],
+                "commit_history": [{"node_changes": [
+                    {"event_id": "a", "intent": "same intent"}]}]}
+    why._share_repeated_intents(repeated)
+    catalog = repeated["intent_catalog"]
+    assert len(catalog) == 1
+    changes = [*repeated["why_detail"], *repeated["commit_history"][0]["node_changes"]]
+    assert all(catalog[change["intent_ref"]] == "same intent" for change in changes)
+    overview = why._compact_answer({
+        **repeated, "answer": "МЕЖА: пояснення агента", "omissions": [],
+        "provenance": [{"source": "journal"}],
+        "trust": [{"trust_class": "agent_proposed"}],
+        "commit_history": [{"commit": "a" * 40, "message": "edit\nmore",
+                            "evidence": "structured_mutation", "direct_mutations": 1,
+                            "sessions": [{"source_kind": "codex"}],
+                            "patches": [{"deleted_lines": ["old line"]}]}],
+    })
+    assert overview["commit_history"][0]["deleted_lines"] == 1
+    assert overview["intent_catalog"] == catalog
+    assert overview["trust"]["classes"] == ["agent_proposed"]
+    assert any(item["kind"] == "compact_view" for item in overview["omissions"])
+    folded = why._fold_chronology([
+        {"object_id": "fact", "relation": "mutated", "direction": "to_node", "count": 2},
+        {"object_id": "fact", "relation": "mutated", "direction": "to_node", "count": 3},
+    ])
+    assert len(folded) == 1 and folded[0]["count"] == 5
     with tempfile.TemporaryDirectory(prefix="cairn-release-scope-") as temp:
         base = Path(temp)
         repo = make_repo(base / "cairn", files={PY_FILE: "x = 1\n"},
