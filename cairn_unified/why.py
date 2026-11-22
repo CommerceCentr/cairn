@@ -413,7 +413,11 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
                     node_keys: set[str]) -> list[dict]:
     """Per-commit evidence for this node, across all agent sessions."""
     history = []
+    seen_facts: set[str] = set()
     for fact in sorted(facts, key=_time_of):
+        if str(fact["id"]) in seen_facts:
+            continue
+        seen_facts.add(str(fact["id"]))
         sem = fact.get("semantic") or {}
         sha = str(sem.get("commit") or "")
         rows = store.read(
