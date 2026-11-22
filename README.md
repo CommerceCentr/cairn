@@ -138,6 +138,11 @@ guess.
 
 ## When and why was this node edited
 
+> **Plain-language benefits, with measurements:**
+> [`docs/WHY-CAIRN.md`](docs/WHY-CAIRN.md) — what Cairn gives you
+> compared with using an agent on its own.
+
+
 ```bash
 python -m cairn_unified why node tests/run_all.py --commit 942cb526 --budget 8000
 ```
@@ -255,7 +260,7 @@ cairn_unified/  v2 package at the repo root (CLI `cairn2`, 12 MCP tools)
   context.py, work.py, workflow.py             bounded context, work graph
   zones.py, merge.py, federation.py            zones, git-linked merge, bundles
   verification.py, evidence.py, gates.py       deterministic checks
-adapters/       journal collectors (opencode is the reference)
+  adapters/     journal collectors: opencode, claude_code, codex, normalize
 tests/          run_all.py + verify_* regressions
 
 repo_id     fingerprint of the SET of root commits — identical in any

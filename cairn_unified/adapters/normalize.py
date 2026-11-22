@@ -1,0 +1,133 @@
+"""Збирач: сирі події адаптера -> канонічна форма, яку читає конвеєр.
+
+`adapters/claude_code.py` у власному docstring каже: «Перетворення на
+контракт робить збирач, бо лише він знає корені репо», і далі —
+«Збирач мапить user-повідомлення з text у `user_intent`; сам адаптер не
+змінює kind, щоб не ламати вже перевірений контракт».
+
+Цього збирача не існувало. Наслідок виміряний: `compaction_link` і
+`causal_history` розуміли ЛИШЕ форму `adapters/opencode.py`, тому журнал
+Claude Code (823 записи цієї сесії) у причинний граф не потрапляв узагалі —
+не через дефект даних, а через відсутність перекладача.
+
+Канонічна форма (те, що читає `compaction_link`):
+
+```text
+mutation     kind, event_id, status="completed", path, seq, tool
+user_intent  kind, event_id, message_id, seq, text
+reasoning    kind, event_id, text
+compaction   kind, event_id, message_id, seq, summary, keep_id, reason
+```
+
+ПОРЯДОК. `seq` потрібен конвеєру, щоб знайти найближчий ПОПЕРЕДНІЙ намір
+для мутації. Беремо його з часу події (`ts`), а не з номера рядка; індекс
+у файлі лишається тільки тай-брейкером для подій з однаковим штампом.
+Журнал append-only, тому час і порядок тут не суперечать один одному — але
+якорем лишається час, бо саме він щось означає.
+
+МЕЖА. Один запис Claude Code може містити кілька правок (кілька
+`tool_use` в одному повідомленні). Кожна стає ОКРЕМОЮ мутацією з
+`event_id = "<uuid>#<n>"`, інакше дві правки різних файлів злилися б в
+одну подію й одна з них зникла б з графа.
+"""
+
+from __future__ import annotations
+
+__all__ = ["canonical_events", "SOURCE_CLAUDE_CODE", "SOURCE_CODEX", "capabilities"]
+
+SOURCE_CLAUDE_CODE = "claude_code_jsonl"
+SOURCE_CODEX = "codex_rollout"
+
+#: Що кожне джерело справді доводить. Читається кодом, а не лише людиною,
+#: бо саме з цього видно, чому для Codex немає ребер «мутація -> вузол».
+CAPABILITIES: dict[str, dict[str, str]] = {
+    SOURCE_CLAUDE_CODE: {
+        "user_intent": "supported",
+        "compaction": "supported",
+        # Було "unsupported:not_exported" — і це була неправда про джерело.
+        # Виміряно: у журналі 125 текстових блоків агента на 28 435 символів,
+        # а адаптер віддавав нуль. Тобто політика адаптера подавалась як
+        # властивість даних. Тепер проза віддається, а довіру до неї
+        # обмежує модель довіри, а не мовчазне викидання.
+        "reasoning": "supported:agent_prose",
+        "mutation": "partial:write_edit_only",
+    },
+    SOURCE_CODEX: {
+        "user_intent": "supported",
+        "compaction": "partial:plaintext_or_encrypted_metadata",
+        "reasoning": "unsupported:encrypted_content",
+        "mutation": "unsupported:shell_embedded",
+    },
+}
+
+
+def capabilities(source_kind: str) -> dict[str, str]:
+    """Матриця можливостей джерела. Невідоме джерело — `unknown`, не `supported`."""
+    return CAPABILITIES.get(source_kind) or {
+        "user_intent": "unknown", "compaction": "unknown",
+        "reasoning": "unknown", "mutation": "unknown",
+    }
+
+
+def _sortable(record: dict, index: int) -> tuple:
+    return (str(record.get("ts") or ""), index)
+
+
+def canonical_events(records, *, include_reasoning: bool = True) -> list[dict]:
+    """Канонічні події з сирих записів `adapters.claude_code.read`.
+
+    `include_reasoning` лишено явним, бо цей адаптер прози агента НЕ
+    віддає (`text` для agent завжди порожній): прапорець існує, щоб було
+    видно, що reasoning тут відсутній за властивістю джерела, а не
+    загублений збирачем.
+    """
+    raw = [(index, record) for index, record in enumerate(records)
+           if isinstance(record, dict)]
+    raw.sort(key=lambda pair: _sortable(pair[1], pair[0]))
+
+    out: list[dict] = []
+    for seq, (_index, record) in enumerate(raw, start=1):
+        kind = record.get("kind")
+        event_id = str(record.get("event_id") or "")
+        ts = str(record.get("ts") or "")
+
+        if kind == "compact_summary":
+            text = str(record.get("text") or "")
+            out.append({
+                "kind": "compaction", "event_id": event_id,
+                "message_id": event_id, "seq": seq, "ts": ts,
+                "summary": text, "keep_id": "",
+                "reason": str(record.get("reason") or "compact_summary"),
+            })
+            continue
+
+        if kind == "message" and record.get("actor") == "user":
+            text = str(record.get("text") or "")
+            if not text.strip():
+                continue
+            out.append({
+                "kind": "user_intent", "event_id": event_id,
+                "message_id": event_id, "seq": seq, "ts": ts, "text": text,
+            })
+            continue
+
+        if kind == "message" and record.get("actor") == "agent":
+            text = str(record.get("text") or "")
+            if include_reasoning and text.strip():
+                out.append({"kind": "reasoning", "event_id": event_id,
+                            "seq": seq, "ts": ts, "text": text})
+            continue
+
+        if kind == "tool_call":
+            paths = list(record.get("abs_paths") or [])
+            tools = list(record.get("operations") or [])
+            for position, path in enumerate(paths):
+                out.append({
+                    "kind": "mutation",
+                    # Кілька правок в одному повідомленні -> кілька подій.
+                    "event_id": f"{event_id}#{position}" if len(paths) > 1 else event_id,
+                    "seq": seq, "ts": ts, "status": "completed",
+                    "path": str(path),
+                    "tool": str(tools[position]) if position < len(tools) else "edit",
+                })
+    return out

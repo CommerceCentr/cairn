@@ -31,11 +31,15 @@ Homepage = "https://github.com/CommerceCentr/cairn"
 cairn2 = "cairn_unified.cli:main"
 
 [tool.setuptools]
-# `adapters` — повноцінний пакет, а не сусідня тека: `verification.py`
-# робив `sys.path.insert` у чотирьох місцях, щоб дістати `adapters.opencode`,
-# тобто модуль ВСЕРЕДИНІ пакета тягнувся ЗА його межі. Через це
-# `cairn_unified` неможливо було встановити й вендорити.
-packages = ["cairn_unified", "cairn_unified.code", "adapters"]
+# Адаптери лежать ВСЕРЕДИНІ пакета. Коли вони були окремою верхньорівневою
+# текою, встановлення клало в `site-packages` загальну назву `adapters`,
+# яка зіткнулася б із будь-чиїм іншим пакетом із такою назвою. Перевірено
+# встановленням колеса в чистий venv.
+packages = [
+  "cairn_unified",
+  "cairn_unified.code",
+  "cairn_unified.adapters",
+]
 
 [tool.setuptools.package-data]
-adapters = ["php-parser/*.php"]
+"cairn_unified.adapters" = ["php-parser/*.php"]

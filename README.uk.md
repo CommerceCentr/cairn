@@ -139,6 +139,11 @@ python -m cairn_unified mcp tools                          # 12 інструме
 
 ## Коли і чому редагувався цей вузол
 
+> **Простою мовою, з вимірами:**
+> [`docs/WHY-CAIRN.md`](docs/WHY-CAIRN.md) — що дає Cairn порівняно
+> зі звичайним використанням агента.
+
+
 ```bash
 python -m cairn_unified why node tests/run_all.py --commit 942cb526 --budget 8000
 ```
@@ -252,7 +257,7 @@ cairn_unified/  v2 у корені репозиторію (CLI `cairn2`, 12 MCP-
   context.py, work.py, workflow.py             контекст, граф задач
   zones.py, merge.py, federation.py            зони, git-злиття, бандли
   verification.py, evidence.py, gates.py       детерміновані перевірки
-adapters/       збирачі журналів (еталон — opencode)
+  adapters/     збирачі журналів: opencode, claude_code, codex, normalize
 tests/          run_all.py + verify_* регресії
 
 repo_id     відбиток НАБОРУ кореневих комітів — однаковий у будь-якому

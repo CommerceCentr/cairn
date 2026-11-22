@@ -24,7 +24,9 @@ from ..canon import sha256_text
 from ..errors import CairnError
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPER = ROOT / "adapters" / "php-parser" / "index.php"
+#: Шлях від САМОГО модуля, а не від кореня репозиторію: після встановлення
+#: пакета кореня репозиторію поруч немає, а `cairn_unified/adapters/` є.
+HELPER = Path(__file__).resolve().parents[1] / "adapters" / "php-parser" / "index.php"
 SKIP_DIRS = {".git", "vendor", "node_modules", ".cairn", "cache", "out"}
 CAPABILITIES = (
     "php84.declarations", "php84.qualified-identity", "php84.source-span",

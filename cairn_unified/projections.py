@@ -104,11 +104,15 @@ def _relation(con, event, p):
     con.execute(
         """INSERT OR REPLACE INTO relations(
             id, from_id, to_id, relation_type, execution_effect, valid_from, valid_until,
-            provenance_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            provenance_json, condition_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             p["id"], p["from_id"], p["to_id"], p["relation_type"], p["execution_effect"],
             p.get("valid_from"), p.get("valid_until"), _j(p.get("provenance")),
+            # Докази ребра: намір і мотив саме ЦІЄЇ правки. Писались у
+            # журнал і губились тут, через що «чому» доводилось брати з
+            # сесійної автокомактації, яка цього вузла могла й не стосуватись.
+            _j(p.get("condition")) if p.get("condition") is not None else None,
             p.get("created_at") or event["recorded_at"],
         ),
     )

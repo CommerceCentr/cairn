@@ -39,7 +39,7 @@ jobs:
           php-version: "8.4"
           tools: none
       - name: Syntax check
-        run: python -m compileall -q cairn_unified adapters tests tools
+        run: python -m compileall -q cairn_unified tests tools
       - name: Run all Unified checks
         run: python tests/run_all.py
         env:

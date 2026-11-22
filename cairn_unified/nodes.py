@@ -267,7 +267,10 @@ def index(store, repo_id: str, actor: dict, paths: list[str] | None = None) -> d
     }
 
     def op(con):
-        ev = store.append(con, "code.indexed", repo_id, payload, actor)
+        # Re-importing the same session must not append an identical full
+        # projection event to the shared ledger on every run.
+        key = f"code-index:{repo_id}:{revision}:{payload['index_digest']}"
+        ev = store.append(con, "code.indexed", repo_id, payload, actor, key)
         return {
             "repo_id": repo_id, "revision": revision, "symbols": len(symbols),
             "edges": 0, "files": len(payload["files"]),

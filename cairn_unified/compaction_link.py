@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import re
 from pathlib import Path
 
 from . import nodes, semantic
@@ -130,8 +131,17 @@ def _prior_intent(ev: dict, intents: list[dict], seqs: list[int]) -> dict | None
     return intents[i] if i >= 0 else None
 
 
+def _prior_reasoning(ev: dict, items: list[dict], seqs: list[int]) -> dict | None:
+    """Найближчий попередній мотив агента. Той самий механізм, що й наміри."""
+    if not seqs:
+        return None
+    i = bisect.bisect_right(seqs, int(ev.get("seq") or 0)) - 1
+    return items[i] if i >= 0 else None
+
+
 def mutation_readiness(store, events: list[dict], repo_id: str,
-                       repo_path: str | Path | tuple) -> tuple[list[tuple], list[dict]]:
+                       repo_path: str | Path | tuple,
+                       allowed_node_keys: set[str] | None = None) -> tuple[list[tuple], list[dict]]:
     """Єдиний класифікатор мутацій: готові до ребра й відкинуті з причиною.
 
     Використовується і при побудові ребер, і верифікатором. Інакше «чому
@@ -156,6 +166,14 @@ def mutation_readiness(store, events: list[dict], repo_id: str,
             unresolved.append({"event_id": ev.get("event_id"),
                                "reason": "node_not_indexed", "path": rel})
             continue
+        if allowed_node_keys is not None:
+            resolved = [node for node in resolved
+                        if str(node["stable_key"]) in allowed_node_keys]
+            if not resolved:
+                unresolved.append({"event_id": ev.get("event_id"),
+                                   "reason": "node_not_changed_in_commit",
+                                   "path": rel})
+                continue
         ready.append((ev, rel, resolved))
     return ready, unresolved
 
@@ -169,7 +187,10 @@ def unresolved_digest(unresolved: list[dict]) -> str:
 
 def session_object(store, *, session_id: str, compaction: dict,
                    repo_id: str, actor: dict, commit: str = "",
-                   opencode_db: str = "", scope: list[str] | None = None) -> dict:
+                   opencode_db: str = "", scope: list[str] | None = None,
+                   source_kind: str = "opencode",
+                   session_source: str = "opencode_db",
+                   source_ref: str = "") -> dict:
     """Створити/отримати session-об'єкт для однієї компактації.
 
     Тотожність — реальний рядок компактації (`message_id`), НЕ SHA коміту.
@@ -188,7 +209,10 @@ def session_object(store, *, session_id: str, compaction: dict,
         stable_key=stable,
         idempotency_key=f"session-cmp:{stable}",
         semantic={
-            "kind": "session", "session_source": "opencode_db",
+            # Звідки саме ця сесія. Було прошито "opencode_db" для будь-якого
+            # джерела: обʼєкт сесії Claude Code брехав би про власне
+            # походження, а верифікатор шукав би її в чужій БД.
+            "kind": "session", "session_source": session_source,
             "session_id": session_id,
             "compaction_message_id": compaction.get("message_id") or "",
             "compaction_seq": compaction.get("seq"),
@@ -197,16 +221,19 @@ def session_object(store, *, session_id: str, compaction: dict,
             "reason": compaction.get("reason") or "",
             "commit": commit,
             # Абсолютний шлях у payload розкривав імʼя користувача й їхав
-            # у bundle. Розташування БД — локальна річ: його дає викликач
-            # або OPENCODE_DB, а не збережений обʼєкт.
-            "source_kind": "opencode",
+            # у bundle. Розташування джерела — локальна річ: його дає
+            # викликач, а не збережений обʼєкт. `source_ref` — ВІДНОСНЕ
+            # імʼя (назва файла журналу), щоб було видно, що саме читати.
+            "source_kind": source_kind,
+            "source_ref": source_ref,
         },
         scope=list(scope or []),
     )["object"]
 
 
 def link_mutations(store, *, events: list[dict], session_obj_id: str,
-                   repo_id: str, repo_path: str | Path | tuple, actor: dict) -> dict:
+                   repo_id: str, repo_path: str | Path | tuple, actor: dict,
+                   allowed_node_keys: set[str] | None = None) -> dict:
     """Побудувати `caused_by` для кожної завершеної мутації з відомим вузлом.
 
     Повертає звіт: links ( нові ребра), replayed, unresolved (список причин).
@@ -220,10 +247,26 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
     links: list[dict] = []
     replayed = 0
     seen: set[tuple[str, str]] = set()
-    ready, unresolved = mutation_readiness(store, events, repo_id, repo_path)
+    ready, unresolved = mutation_readiness(
+        store, events, repo_id, repo_path, allowed_node_keys)
+
+    # Мотиви, впорядковані за seq: Claude Code пише прозу й виклик
+    # інструмента ОКРЕМИМИ записами, тому збіг за `event_id` там не буває
+    # ніколи (виміряно: 126 мотивів, 0 привʼязок). Беремо найближчий
+    # попередній — і називаємо це інакше, бо доказ слабший.
+    reasoning_items = sorted(
+        (e for e in events if e.get("kind") == "reasoning" and e.get("text")),
+        key=lambda e: int(e.get("seq") or 0))
+    reasoning_seqs = [int(e.get("seq") or 0) for e in reasoning_items]
 
     for ev, rel, resolved in ready:
         rationale = reasons_by_event.get(str(ev["event_id"]), "")
+        rationale_source = "agent_reasoning_same_event" if rationale else "none"
+        if not rationale:
+            near = _prior_reasoning(ev, reasoning_items, reasoning_seqs)
+            if near:
+                rationale = str(near.get("text") or "")
+                rationale_source = "agent_reasoning_prior_by_seq"
         intent = _prior_intent(ev, intents, intent_seqs)
         before = ev.get("old_string") or ""
         after = ev.get("new_string") or ""
@@ -232,7 +275,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
             "ts": ev.get("ts"), "path": rel,
             "before_sha256": sha256_text(before) if before else "",
             "after_sha256": sha256_text(after) if after else "",
-            "rationale_source": "agent_reasoning" if rationale else "none",
+            "rationale_source": rationale_source,
             # Корінь «чому» — слова користувача, не агента. Якщо наміру немає,
             # поле порожнє з явним маркером: не підставляємо reasoning замість
             # нього, бо це підвищило б довіру власного тексту.
@@ -270,7 +313,9 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
 
 def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
                       commit: str, repo_id: str, repo_roots: list[str],
-                      scope: list[str], opencode_db: str, actor: dict) -> dict:
+                      scope: list[str], opencode_db: str, actor: dict,
+                      source_kind: str = "opencode", source_ref: str = "",
+                      mutation_filter: str = "") -> dict:
     """«Чому відкинуто» — окремий перевірений об'єкт, не тихий лог.
 
     Причини рахуються з того самого класифікатора, що й ребра; верифікатор
@@ -295,7 +340,15 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
     for reason in sorted(counts):
         lines.append(f"[{reason}] {counts[reason]}: " + ", ".join(examples[reason]))
     text = "\n".join(lines) + "\n"
-    stable = _digest(f"unresolved:v1:{commit}:{unresolved_digest(unresolved)}")
+    # Empty mutation lists are common for Codex. The old key collapsed every
+    # such session at the same commit into one object and kept the first
+    # journal's source_ref, making later sessions impossible to verify.
+    session_key = str(session_obj["semantic"].get("session_id") or session_obj["id"])
+    stable = _digest(
+        f"unresolved:v2:{session_key}:{source_kind}:{commit}:"
+        f"{mutation_filter}:"
+        f"{unresolved_digest(unresolved)}"
+    )
     return semantic.put_object(
         store, object_type="observation",
         title=f"unresolved mutations {commit[:7]}",
@@ -305,7 +358,9 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
             "kind": "unresolved_mutations", "commit": commit, "repo_id": repo_id,
             "session_id": str(session_obj["semantic"].get("session_id") or ""),
             "session_obj_id": str(session_obj["id"]),
-            "source_kind": "opencode", "repo_roots": list(repo_roots),
+            "source_kind": source_kind, "source_ref": source_ref,
+            "mutation_filter": mutation_filter,
+            "repo_roots": list(repo_roots),
             "unresolved_count": len(unresolved),
             "unresolved_by_reason": counts,
             "unresolved_digest": unresolved_digest(unresolved),
@@ -315,6 +370,63 @@ def unresolved_object(store, *, unresolved: list[dict], session_obj: dict,
         },
         scope=scope,
     )["object"]
+
+
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def committed_nodes(store, repo_id: str, repo_path: str | Path,
+                    commit: str, path: str, *, is_head: bool | None = None) -> list[dict]:
+    """Nodes with changed lines in a committed file; whole-file fallback.
+
+    The index describes HEAD. For an older revision its symbol line numbers
+    are not evidence, so only the stable whole-file address is returned.
+    """
+    grouped: dict[str, dict] = {}
+    for variant in path_variants(path, repo_path):
+        for node in nodes.resolve(store, repo_id, variant):
+            grouped[str(node["stable_key"])] = node
+    all_nodes = list(grouped.values())
+    whole = [node for node in all_nodes
+             if str(node["address"]).startswith("whole:")]
+    if is_head is None:
+        is_head = git.head(repo_path) == commit
+    if not is_head:
+        return whole
+    if git.git(str(repo_path), "status", "--porcelain", "--", path).strip():
+        # The index reads the worktree. Dirty content can move line numbers
+        # away from the committed patch, so only file-level evidence survives.
+        return whole
+    if git.git(str(repo_path), "status", "--porcelain", "--", path).strip():
+        # The index reads the worktree. Dirty content can move line numbers
+        # away from the committed patch, so only file-level evidence survives.
+        return whole
+    diff = git.git(str(repo_path), "show", "--format=", "--unified=0",
+                   commit, "--", path)
+    ranges = []
+    for line in diff.splitlines():
+        match = _HUNK.match(line)
+        if match:
+            start = int(match.group(1))
+            count = int(match.group(2) or "1")
+            if count:
+                ranges.append((start, start + count - 1))
+    if not ranges:
+        return whole
+    changed = [node for node in all_nodes
+               if not str(node["address"]).startswith("whole:")
+               and any(int(node.get("start_line") or 1) <= end
+                           and int(node.get("end_line") or 0) >= start
+                           for start, end in ranges)]
+    return changed or whole
+
+
+def committed_node_keys(store, repo_id: str, repo_path: str | Path,
+                        commit: str, paths: list[str]) -> set[str]:
+    is_head = git.head(repo_path) == commit
+    return {str(node["stable_key"]) for path in paths
+            for node in committed_nodes(store, repo_id, repo_path, commit,
+                                        path, is_head=is_head)}
 
 
 def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
@@ -344,18 +456,17 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
     found: list[tuple[str, str, dict]] = []
     unresolved = []
     scope: set[str] = set()
+    is_head = git.head(repo_path) == full
     for status_code, path in changed:
         # Після переносу пакета в корінь старий шлях коміту не резолвиться.
         # Резолвимо обидва варіанти й дедупликуємо за stable_key, інакше
         # той самий вузол дав би два `mutated`-ребра з різними адресами.
-        grouped: dict[str, dict] = {}
-        for variant in path_variants(path, repo_path):
-            for node in nodes.resolve(store, repo_id, variant):
-                grouped[str(node["stable_key"])] = node
-        if not grouped:
+        matching = committed_nodes(store, repo_id, repo_path, full, path,
+                                   is_head=is_head)
+        if not matching:
             unresolved.append({"path": path, "reason": "node_not_indexed"})
             continue
-        for node in grouped.values():
+        for node in matching:
             found.append((status_code, path, node))
             scope.add(str(node["address"]))
             scope.add(str(node["stable_key"]))
@@ -386,7 +497,8 @@ def link_commit(store, *, repo_id: str, repo_path: str | Path, commit: str,
 
 def auto_compaction(store, *, events: list[dict], links: list[dict],
                     session_obj: dict, opencode_db: str, actor: dict,
-                    commit: str = "") -> dict:
+                    commit: str = "", source_kind: str = "opencode",
+                    source_ref: str = "") -> dict:
     """Детермінована автокомактація: «чому» дослівно з реальних подій сесії.
 
     НЕ є компактацією opencode.db і не видає себе за неї: окремий
@@ -399,6 +511,12 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
     intents, seqs = _intents(events)
     reasons = {str(e["event_id"]): str(e.get("text") or "")
                for e in events if e.get("kind") == "reasoning" and e.get("text")}
+    # Мотиви, впорядковані за seq, для випадку, коли точного збігу події
+    # немає (Claude Code пише прозу й виклик інструмента окремими записами).
+    reasoning_items = sorted(
+        (e for e in events if e.get("kind") == "reasoning" and e.get("text")),
+        key=lambda e: int(e.get("seq") or 0))
+    reasoning_seqs = [int(e.get("seq") or 0) for e in reasoning_items]
     muts = {str(e["event_id"]): e for e in events if e.get("kind") == "mutation"}
     session_id = str(session_obj["semantic"].get("session_id") or "")
     cmp_msg = str(session_obj["semantic"].get("compaction_message_id") or "")
@@ -427,15 +545,41 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
                 "message_id": str(prior["message_id"]), "seq": prior["seq"],
                 "text_sha256": sha256_text(str(prior.get("text") or "")),
             })
+    # Джерело БЕЗ мутацій (Codex: правки всередині `exec`). Тоді ланцюга
+    # «намір -> мутація» не існує, але самі наміри є, і саме вони є «чому».
+    # Без цієї гілки `intent_refs` виходив порожнім, і причина зникала —
+    # не тому, що її не було, а тому, що її ні до чого було прив'язати.
+    if not ordered and intents:
+        basis_without_mutations = True
+        for prior in intents:
+            key = str(prior.get("message_id") or "")
+            if key and key not in seen:
+                seen.add(key)
+                intent_refs.append({
+                    "message_id": key, "seq": prior["seq"],
+                    "text_sha256": sha256_text(str(prior.get("text") or "")),
+                })
+    else:
+        basis_without_mutations = False
+
     for link in shown_chain:
         ev = muts.get(str(link["event_id"]), {})
         prior = _prior_intent(ev, intents, seqs)
         reason = reasons.get(str(link["event_id"]), "")
+        if reason:
+            motive = f"  мотив (agent_reasoning, та сама подія): {reason}"
+        else:
+            near = _prior_reasoning(ev, reasoning_items, reasoning_seqs)
+            motive = (
+                f"  мотив (agent_reasoning, попередній за часом, seq "
+                f"{near['seq']}): {near['text']}"
+                if near else "  мотив: (у журналі немає)"
+            )
         chain.extend([
             f"[{link['event_id']}]",
             f"  намір (user, seq {prior['seq'] if prior else '-'}): "
             f"{prior['text'] if prior else '(не встановлено)'}",
-            f"  мотив (agent_reasoning): {reason or '(відсутній у події)'}",
+            motive,
             f"  мутація: {ev.get('tool', '?')} {link['path']} -> {link['address']}",
         ])
 
@@ -470,9 +614,14 @@ def auto_compaction(store, *, events: list[dict], links: list[dict],
             "session_obj_id": str(session_obj["id"]),
             "commit": commit,
             "compaction_message_id": cmp_msg,
-            "basis": "opencode_events", "generator": "compaction_link/auto_compaction/1.1",
+            # Підстава називається, а не припускається: там, де джерело не дає
+            # мутацій, ланцюга «намір -> мутація» немає, і це видно з поля.
+            "basis": ("user_intents_only" if basis_without_mutations
+                      else "session_events"),
+            "generator": "compaction_link/auto_compaction/1.2",
             "chain_shown": len(shown_chain), "chain_total": len(ordered),
-            "summary_sha256": sha256_text(text), "source_kind": "opencode",
+            "summary_sha256": sha256_text(text), "source_kind": source_kind,
+            "source_ref": source_ref,
             "intent_refs": intent_refs,
             "mutation_event_ids": [str(l["event_id"]) for l in ordered],
             "linked_nodes": len(ordered),

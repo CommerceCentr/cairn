@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT))
 
-from adapters import opencode  # noqa: E402
+from cairn_unified.adapters import opencode  # noqa: E402
 from cairn_unified import code, compaction_link, nodes, verification  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
 from cairn_unified.canon import sha256_text  # noqa: E402
@@ -140,9 +140,15 @@ def main() -> int:
         checks.append(("evidence_level=participation",
                        all(_cond(r).get("evidence_level") == "participation" for r in caused)))
         with_reason = [r for r in caused if _cond(r).get("rationale")]
-        checks.append(("rationale з reasoning події",
+        # Сила звʼязку мусить бути НАЗВАНА: `same_event` — проза лежить у тій
+        # самій події (так пише opencode), `prior_by_seq` — найближча
+        # попередня (так виходить у Claude Code, де текст і виклик
+        # інструмента — різні записи). Одна мітка на обидва випадки
+        # приховала б, наскільки доказ міцний.
+        ALLOWED = {"agent_reasoning_same_event", "agent_reasoning_prior_by_seq"}
+        checks.append(("rationale має назване джерело",
                        len(with_reason) > 0 and all(
-                           _cond(r)["evidence"].get("rationale_source") == "agent_reasoning"
+                           _cond(r)["evidence"].get("rationale_source") in ALLOWED
                            for r in with_reason)))
         checks.append(("не triples ребро з неcompleted мутації",
                        all(_cond(r)["evidence"].get("event_id") for r in caused)))

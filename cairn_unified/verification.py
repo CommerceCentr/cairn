@@ -66,7 +66,7 @@ def _db_path(sem: dict, override: str | None) -> str:
     if legacy:
         return legacy
     try:
-        from adapters import opencode
+        from .adapters import opencode
         return opencode.default_db()
     except Exception:                             # noqa: BLE001 — немає адаптера
         return ""
@@ -88,6 +88,102 @@ def _source_failure(source: str, exc: BaseException, what: str) -> str:
         return f"unresolved:{what}_source_missing"
     return f"verifier_error:{what}_source_{type(exc).__name__}"
 
+def _source_gives_mutations(sem: dict) -> bool:
+    """Чи може джерело цього обʼєкта давати мутації взагалі."""
+    kind = str(sem.get("source_kind") or "opencode")
+    if kind == "opencode":
+        return True
+    try:
+        from .adapters import normalize
+
+        state = normalize.capabilities(kind).get("mutation", "unknown")
+    except ImportError:
+        return True
+    return not str(state).startswith("unsupported")
+
+
+def _journal_path(source_kind: str, source_ref: str) -> str:
+    """Знайти журнал за ВІДНОСНИМ імʼям. Абсолютних шляхів у обʼєктах немає."""
+    if not source_ref:
+        return ""
+    try:
+        if source_kind == "claude_code_jsonl":
+            from .adapters import claude_code as reader
+        elif source_kind == "codex_rollout":
+            from .adapters import codex as reader
+        else:
+            return ""
+    except ImportError:
+        return ""
+    for candidate in reader.discover():
+        if Path(candidate).name == source_ref:
+            return candidate
+    return ""
+
+
+def _source_events(sem: dict, *, opencode_db: str | None = None) -> tuple[list, str, str]:
+    """(канонічні події джерела, шлях, причина провалу).
+
+    Джерело визначає САМ обʼєкт. Невідоме джерело -> порожньо з причиною,
+    а не тихе читання opencode.db замість нього: підміна джерела зробила б
+    перевірку безсенсовною.
+    """
+    kind = str(sem.get("source_kind") or "opencode")
+    if kind == "opencode":
+        path = _db_path(sem, opencode_db)
+        if not path:
+            return [], "", "unresolved:session_source_missing"
+        try:
+            from .adapters import opencode
+
+            return (list(opencode.read(path, str(sem.get("session_id") or "") or None)),
+                    path, "")
+        except Exception as exc:                  # noqa: BLE001 — класифікуємо
+            return [], path, _source_failure(path, exc, "session")
+
+    path = _journal_path(kind, str(sem.get("source_ref") or ""))
+    if not path:
+        return [], "", f"unresolved:journal_missing:{kind}"
+    try:
+        from .adapters import normalize
+
+        if kind == "claude_code_jsonl":
+            from .adapters import claude_code as reader
+        else:
+            from .adapters import codex as reader
+        return normalize.canonical_events(reader.read(path)), path, ""
+    except Exception as exc:                      # noqa: BLE001 — класифікуємо
+        return [], path, _source_failure(path, exc, "session")
+
+
+def _verify_intents(sem: dict, events: list, checks: list, reasons: list) -> None:
+    """Кожен namir у обʼєкті мусить збігтися з живим джерелом за sha256.
+
+    Розбіжність -> `source_changed`, а не тихе прийняття: інакше правка
+    історії в журналі проходила б непоміченою.
+    """
+    refs = sem.get("intent_refs") or []
+    if not refs:
+        return
+    live = {str(event.get("message_id")): str(event.get("text") or "")
+            for event in events if event.get("kind") == "user_intent"}
+    matched = changed = absent = 0
+    for ref in refs:
+        text = live.get(str(ref.get("message_id")))
+        if text is None:
+            absent += 1
+        elif sha256_text(text) == str(ref.get("text_sha256") or ""):
+            matched += 1
+        else:
+            changed += 1
+    if matched:
+        checks.append({"check": "intents_match_source", "value": f"{matched}/{len(refs)}"})
+    if changed:
+        reasons.append(f"unresolved:intent_text_changed:{changed}")
+    if absent:
+        reasons.append(f"unresolved:intent_absent_in_source:{absent}")
+
+
 def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                  packs_dir: str | Path | None = None,
                  opencode_db: str | None = None) -> tuple[list[dict], list[str]]:
@@ -101,7 +197,14 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
     # Для всіх інших видів поле не змінилося.
     # merge_context не має ані commit, ані base_revision: його часова прив'язка
     # — git_head + commit_links, які перевіряються в Own гілці нижче.
-    skip_commit = sem.get("kind") == "merge_context"
+    # Види, які за своєю природою НЕ привʼязані до коміту й вузла коду.
+    # Задача (`work_item`) — це намір, а не правка: вимагати від неї
+    # коміта означало б називати «не встановлено» те, чого там і не
+    # мусить бути. Виміряно: work_item ескалював із `commit_absent`
+    # і `node_not_indexed` при повній справності.
+    NOT_CODE_BOUND = {"work_item", "note"}
+    skip_commit = (sem.get("kind") == "merge_context"
+                   or sem.get("kind") in NOT_CODE_BOUND)
     base_revision_only = not sem.get("commit") and bool(
         sem.get("kind") == "user_requested_change" and sem.get("base_revision"))
     commit = str(sem.get("base_revision") if base_revision_only
@@ -141,19 +244,55 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         # SHA коміту й не власний текст агента. Джерело читається з БД
         # адаптером у режимі mode=ro; НЕ з payload об’єкта, бо звірка самого
         # себе з собою була б тавтологією (виміряний клас помилок №13).
-        db_path = _db_path(sem, opencode_db)
+        source_kind = str(sem.get("source_kind") or "opencode")
         msg_id = str(sem.get("compaction_message_id") or "")
         source = None
         source_failure = ""
-        if db_path and msg_id:
-            try:
-                from adapters import opencode
-                source = opencode.compaction(db_path, str(sem.get("session_id") or "") or None,
-                                             message_id=msg_id)
-            except Exception as exc:              # noqa: BLE001 — класифікуємо нижче
-                source = None
-                source_failure = _source_failure(db_path, exc, "session")
-        if source is not None:
+        if source_kind == "opencode":
+            db_path = _db_path(sem, opencode_db)
+            if db_path and msg_id:
+                try:
+                    from .adapters import opencode
+                    source = opencode.compaction(db_path, str(sem.get("session_id") or "") or None,
+                                                 message_id=msg_id)
+                except Exception as exc:          # noqa: BLE001 — класифікуємо нижче
+                    source = None
+                    source_failure = _source_failure(db_path, exc, "session")
+        else:
+            # Журнал Claude Code / Codex: компактацію шукаємо за тим самим
+            # `message_id`, що записав збирач. Якщо агент компактації не
+            # робив, її там і не буде — і це теж відповідь, із причиною.
+            events, path, source_failure = _source_events(sem, opencode_db=opencode_db)
+            if events:
+                found = [event for event in events
+                         if event.get("kind") == "compaction"
+                         and str(event.get("message_id")) == msg_id]
+                if found:
+                    source = {"summary": found[-1].get("summary"),
+                              "keep_id": found[-1].get("keep_id") or ""}
+                elif not msg_id.endswith(":tail"):
+                    source_failure = "unresolved:compaction_absent_in_journal"
+                else:
+                    # Описова сесія без компактації агента: доводимо те, що
+                    # джерело справді містить — наміри й сам факт сесії.
+                    checks.append({"check": "journal_readable",
+                                   "value": Path(path).name[:24]})
+                    sids = {str(event.get("session_id") or "")
+                            for event in events if event.get("session_id")}
+                    if not sids or str(sem.get("session_id")) in sids:
+                        checks.append({"check": "session_id_in_journal",
+                                       "value": str(sem.get("session_id"))[:18]})
+                    else:
+                        reasons.append("unresolved:session_id_not_in_journal")
+                    _verify_intents(sem, events, checks, reasons)
+                    source_failure = ""
+                    # Описова сесія доведена журналом: далі не треба ні
+                    # компактації, ні повідомлення про її відсутність.
+                    source = {"summary": "", "keep_id": str(sem.get("keep_id") or ""),
+                              "_descriptive": True}
+        if source is not None and source.get("_descriptive"):
+            pass
+        elif source is not None:
             if sha256_text(str(source.get("summary") or "")) == sem.get("summary_sha256"):
                 checks.append({"check": "session_summary_matches",
                                "value": str(sem.get("summary_sha256"))[:12]})
@@ -167,18 +306,49 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         else:
             reasons.append(source_failure or "unresolved:session_source_unavailable")
 
+    if sem.get("kind") == "auto_compaction" and sem.get("source_kind") not in (None, "opencode"):
+        # Автокомактація з журналу Claude Code / Codex: доводимо наміри
+        # дослівно за sha256 і зберігаємо матрицю можливостей джерела.
+        events, path, failure = _source_events(sem, opencode_db=opencode_db)
+        if failure:
+            reasons.append(failure)
+        else:
+            checks.append({"check": "journal_readable", "value": Path(path).name[:24]})
+            _verify_intents(sem, events, checks, reasons)
+            try:
+                from .adapters import normalize
+
+                caps = normalize.capabilities(str(sem.get("source_kind")))
+                checks.append({"check": "source_capabilities",
+                               "value": ";".join(f"{k}={v}" for k, v in sorted(caps.items()))})
+            except ImportError:
+                pass
+
     if sem.get("kind") == "unresolved_mutations":
         # «Чому відкинуто» перевіряється тим самим класифікатором, що й
         # ребра: повторне читання opencode.db + поточний індекс вузлів.
         # Об'єкт не звіряється з власним текстом (тавтологія).
-        db_path = _db_path(sem, opencode_db)
         try:
-            from adapters import opencode
             from . import compaction_link
-            events = list(opencode.read(db_path, str(sem.get("session_id") or "") or None))
+
+            events, db_path, failure = _source_events(sem, opencode_db=opencode_db)
+            if failure:
+                raise RuntimeError(failure)
+            allowed = None
+            if sem.get("mutation_filter") == "committed_nodes":
+                roots = tuple(sem.get("repo_roots") or ())
+                if not roots:
+                    raise RuntimeError("missing_repo_root_for_commit_filter")
+                commit = str(sem.get("commit") or "")
+                changed = [line.split("\t", 1)[1] for line in
+                           git.git(roots[0], "show", "--name-status", "--format=",
+                                   commit).splitlines() if "\t" in line]
+                allowed = compaction_link.committed_node_keys(
+                    store, str(sem.get("repo_id") or ""), roots[0], commit,
+                    changed)
             _ready, recomputed = compaction_link.mutation_readiness(
                 store, events, str(sem.get("repo_id") or ""),
-                tuple(sem.get("repo_roots") or ()))
+                tuple(sem.get("repo_roots") or ()), allowed)
             if compaction_link.unresolved_digest(recomputed) == sem.get("unresolved_digest"):
                 checks.append({"check": "unresolved_reasons_match_db",
                                "value": str(len(recomputed))})
@@ -237,16 +407,19 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         except Exception as exc:                  # noqa: BLE001 — класифікуємо
             reasons.append(_source_failure(str(store.root), exc, "zone"))
 
-    if sem.get("kind") == "auto_compaction":
+    if sem.get("kind") == "auto_compaction" and sem.get("source_kind") in (None, "opencode"):
         # Автокомактація не має права свідчити сама за себе: кожен намір
         # перечитується з opencode.db у mode=ro і звіряється за digest тексту.
         # Джерело — user-повідомлення, а не згенерований агентами текст.
+        # Умова на `source_kind`: для журналів Claude Code / Codex працює
+        # гілка нижче. Без неї обидві виконувались, і друга завжди падала,
+        # бо шукала наміри в чужій БД.
         db_path = _db_path(sem, opencode_db)
         refs = sem.get("intent_refs") or []
         source_texts: dict[str, str] = {}
         if db_path:
             try:
-                from adapters import opencode
+                from .adapters import opencode
                 for rec in opencode.read(db_path,
                                          str(sem.get("session_id") or "") or None):
                     if rec["kind"] == "user_intent":
@@ -275,7 +448,7 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         source_texts: dict[str, str] = {}
         if db_path:
             try:
-                from adapters import opencode
+                from .adapters import opencode
                 for rec in opencode.read(db_path,
                                          str(sem.get("session_id") or "") or None):
                     if rec["kind"] == "user_intent":
@@ -373,7 +546,13 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             else:
                 reasons.append("unresolved:merge_conflicts_mismatch")
 
+    # Адреси вузлів лежать і в `scope`, і в `node_refs`: за ADR-016 `nd-*`
+    # виведено зі `scope` в окреме поле, бо `scope` — це область дії, а не
+    # перелік вмісту. Читати лише `scope` після того переносу означало
+    # `node_absent` при повній справності — виміряно на обʼєкті
+    # `unresolved_mutations`.
     addresses = [str(x) for x in (sem.get("scope") or [])]
+    addresses += [str(x) for x in (sem.get("node_refs") or [])]
     if sem.get("node_address"):
         addresses.append(str(sem["node_address"]))
     # Сесія не має одного scope: вона пов'язана з багатьма вузлами ребрами
@@ -392,12 +571,22 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
             checks.append({"check": "session_has_indexed_node",
                            "value": str(linked["from_id"])[:40]})
             addresses = [str(linked["from_id"])]
+        elif not _source_gives_mutations(sem):
+            checks.append({"check": "node_link_unsupported_by_source",
+                           "value": str(sem.get("source_kind"))})
         else:
             reasons.append("unresolved:session_no_indexed_node")
     if not addresses:
         # dup: злиття прив'язане до git-хешів (гілка merge_context), а не до
         # одного вузла індексу; вимагати scope тут було б хибною перевіркою.
-        if sem.get("kind") not in {"session", "merge_context"}:
+        if sem.get("kind") in {"session", "merge_context"} | NOT_CODE_BOUND:
+            pass
+        elif not _source_gives_mutations(sem):
+            # Не «не встановлено», а «джерело такого не дає». Лагодити
+            # нічого: у Codex правки живуть у shell-рядках усередині `exec`.
+            checks.append({"check": "node_link_unsupported_by_source",
+                           "value": str(sem.get("source_kind"))})
+        else:
             reasons.append("unresolved:node_absent")
     else:
         found = False
@@ -411,6 +600,11 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                 break
         if found:
             checks.append({"check": "node_indexed", "value": addresses[0][:60]})
+        elif sem.get("kind") in NOT_CODE_BOUND:
+            # У задачі в `scope` лежить repo_id, а не адреса вузла: шукати
+            # його в індексі символів — хибна перевірка, а не брак даних.
+            checks.append({"check": "scope_not_a_node_address",
+                           "value": addresses[0][:40]})
         else:
             reasons.append("unresolved:node_not_indexed")
 

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT))
 
-from adapters import opencode  # noqa: E402
+from cairn_unified.adapters import opencode  # noqa: E402
 from cairn_unified import causal_history, code, semantic, verification, work  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
 

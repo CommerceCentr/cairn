@@ -13,7 +13,7 @@ from .canon import canonical, iso, payload_hash, prefixed, utcnow, write_json_at
 from .db import connect, ensure, set_version as db_set_version, stored_version as db_stored_version
 from .errors import CairnError
 from .ledger import chain_hash
-from .ontology import DB_SCHEMA_VERSION, DEFAULTS, SCHEMA_VERSION
+from .ontology import DB_SCHEMA_VERSION, DEFAULTS, RESERVED_SURFACES, SCHEMA_VERSION
 from .redact import redact_value, secret_hits
 
 
@@ -365,7 +365,10 @@ class Store:
                 exists = Path(repo["path"]).exists()
                 add(f"git:{repo['id'][:12]}", exists, repo["path"])
         ok = all(item["ok"] for item in checks)
-        return {"ok": ok, "checks": checks, "schema_version": SCHEMA_VERSION}
+        return {
+            # Поверхні, які існують у схемі, але нічим не заповнюються.
+            # Без цього рядка читач дізнається про них лише з коду.
+            "reserved_surfaces": dict(RESERVED_SURFACES),"ok": ok, "checks": checks, "schema_version": SCHEMA_VERSION}
 
 
 def parse_actor(value: str | dict | None, *, default: str = "human:local") -> dict:

@@ -1,0 +1,250 @@
+{
+ "question": "Чому у `cairn_unified/why.py` функція `_apply_budget` ріже хронологію й походження, але ніколи не прибирає `omissions`, і звідки там узявся `budget_exceeded`?",
+ "node": "cairn_unified/why.py",
+ "commit": "9feecdf9081108a3a4b33d2a5052f8bca15eace9",
+ "native": {
+  "total": {
+   "chars": 1053085,
+   "bytes": 1139679,
+   "lines": 2117,
+   "tokens_est": 263273,
+   "ms": 95.9
+  },
+  "steps": [
+   {
+    "step": "читання файла cairn_unified/why.py",
+    "chars": 28715,
+    "bytes": 33616,
+    "lines": 683,
+    "tokens_est": 7179,
+    "sha256": "739372904954e123",
+    "ms": 5.5
+   },
+   {
+    "step": "git log -1",
+    "chars": 529,
+    "bytes": 529,
+    "lines": 7,
+    "tokens_est": 133,
+    "sha256": "f40445678e5cf45e",
+    "ms": 25.0
+   },
+   {
+    "step": "git log -p -12 -- cairn_unified/why.py",
+    "chars": 22331,
+    "bytes": 25709,
+    "lines": 522,
+    "tokens_est": 5583,
+    "sha256": "fc0095264ec8e94f",
+    "ms": 27.9
+   },
+   {
+    "step": "git blame",
+    "chars": 69012,
+    "bytes": 73913,
+    "lines": 683,
+    "tokens_est": 17253,
+    "sha256": "4ba2087e38d3043c",
+    "ms": 31.7
+   },
+   {
+    "step": "лінійний скан журналу ~ why.py",
+    "chars": 932498,
+    "bytes": 1005912,
+    "lines": 222,
+    "tokens_est": 233125,
+    "sha256": "b21850b799d17f45",
+    "ms": 5.8
+   }
+  ],
+  "facts": [
+   {
+    "kind": "що",
+    "needle": "budget_exceeded",
+    "means": "у коді є окремий стан «бюджет не виконано»",
+    "present": true,
+    "tokens_to_reach": 5416
+   },
+   {
+    "kind": "що",
+    "needle": "omissions",
+    "means": "список пропусків існує як окреме поле",
+    "present": true,
+    "tokens_to_reach": 1328
+   },
+   {
+    "kind": "що",
+    "needle": "згорнуто до лічильників",
+    "means": "довіра згортається, а не зникає",
+    "present": true,
+    "tokens_to_reach": 5882
+   },
+   {
+    "kind": "чому",
+    "needle": "6 600",
+    "means": "перша версія рапортувала 2 000 і віддавала 6 600",
+    "present": true,
+    "tokens_to_reach": 5446
+   },
+   {
+    "kind": "чому",
+    "needle": "приховав межу",
+    "means": "правило: контекст, що приховав межу, гірший за порожній",
+    "present": true,
+    "tokens_to_reach": 5358
+   },
+   {
+    "kind": "хто",
+    "needle": "бюджет",
+    "means": "хто саме цього просив — намір користувача",
+    "present": true,
+    "tokens_to_reach": 716
+   },
+   {
+    "kind": "коли",
+    "needle": "9feecdf",
+    "means": "коміт, у якому це зʼявилось",
+    "present": true,
+    "tokens_to_reach": 5970
+   }
+  ],
+  "facts_found": 7
+ },
+ "cairn": {
+  "total": {
+   "chars": 14212,
+   "bytes": 18431,
+   "lines": 320,
+   "tokens_est": 3553,
+   "sha256": "7dc488ad227cb2bd",
+   "ms": 156.3
+  },
+  "facts": [
+   {
+    "kind": "що",
+    "needle": "budget_exceeded",
+    "means": "у коді є окремий стан «бюджет не виконано»",
+    "present": false,
+    "tokens_to_reach": null
+   },
+   {
+    "kind": "що",
+    "needle": "omissions",
+    "means": "список пропусків існує як окреме поле",
+    "present": true,
+    "tokens_to_reach": 3260
+   },
+   {
+    "kind": "що",
+    "needle": "згорнуто до лічильників",
+    "means": "довіра згортається, а не зникає",
+    "present": false,
+    "tokens_to_reach": null
+   },
+   {
+    "kind": "чому",
+    "needle": "6 600",
+    "means": "перша версія рапортувала 2 000 і віддавала 6 600",
+    "present": false,
+    "tokens_to_reach": null
+   },
+   {
+    "kind": "чому",
+    "needle": "приховав межу",
+    "means": "правило: контекст, що приховав межу, гірший за порожній",
+    "present": false,
+    "tokens_to_reach": null
+   },
+   {
+    "kind": "хто",
+    "needle": "бюджет",
+    "means": "хто саме цього просив — намір користувача",
+    "present": true,
+    "tokens_to_reach": 2069
+   },
+   {
+    "kind": "коли",
+    "needle": "9feecdf",
+    "means": "коміт, у якому це зʼявилось",
+    "present": true,
+    "tokens_to_reach": 18
+   }
+  ],
+  "facts_found": 3,
+  "answer_text": "КОЛИ   2026-11-21T14:30:26 — коміт 9feecdf: commit 9feecdf\nСЕСІЯ  2e7f1040-a2c2-4328-8da0-090b0b1dce7d, компактація 2e7f1040-a2c2-4328-8da0-090b0b1dce7d:tail\nЧОМУ   намірів користувача: 4; перші 4:\n       [1] @\"Q:\\prj\\cairn-private\\Cairn_Unified_Technical_Specification_UA (v3).md\" Проаналізуй зміни, котрі було внесено в проект, вияви основні відмі\n       [650] Тепер потрібно у відповідності до алгоритмів cairn зробити зв'язку з модифікаціями вузлів, описову причинність чому з попередніх повідомлень\n       [739] I hit my usage limit while you were working, but it has reset now. Please continue from where you left off.\n       [986] внеси потрібні виправлення, Codex - не треба далі правити, окремо підключу Codex і зроблю те саме для нього, щоб він самостійно пропрацював.\nМОТИВ  слова АГЕНТА (не доведене твердження), ланок 12 із 242; підстава: session_events\nМЕЖА   звʼязок доводить участь у часі й шляху, не семантичну причину; коміт причиною не є",
+  "chronology": [
+   {
+    "ts": "2026-11-21T14:30:22.843Z",
+    "relation": "caused_by",
+    "direction": "from_node",
+    "count": 12,
+    "object_id": "020dde88dffc2fbf",
+    "kind": "session",
+    "title": "compaction 222 2e7f1040-a2c2-4328-8da0-090b0b1dce7d",
+    "actor": {
+     "id": "vaso",
+     "kind": "human"
+    },
+    "source": "claude_code_jsonl"
+   },
+   {
+    "ts": "2026-11-21T14:30:26.967Z",
+    "relation": "mutated",
+    "direction": "to_node",
+    "count": 1,
+    "object_id": "8c036721a44ca1c6",
+    "kind": "commit_fact",
+    "title": "commit 9feecdf",
+    "actor": {
+     "id": "vaso",
+     "kind": "human"
+    },
+    "source": "git_diff"
+   },
+   {
+    "ts": "2026-11-21T14:30:43.271Z",
+    "relation": "derived_from",
+    "direction": "second_hop",
+    "via": "020dde88dffc2fbf",
+    "count": 1,
+    "object_id": "e0e3592349c1a7d2",
+    "kind": "auto_compaction",
+    "title": "автокомактація чому 2e7f1040-a2c2-4328-8da0-090b0b1dce7d",
+    "actor": {
+     "id": "vaso",
+     "kind": "human"
+    },
+    "source": "session_events"
+   },
+   {
+    "ts": "2026-11-21T14:30:43.316Z",
+    "relation": "governed_by",
+    "direction": "second_hop",
+    "via": "020dde88dffc2fbf",
+    "count": 1,
+    "object_id": "wrk_01a1fe84-4374-7b1e-87f6-ef6db0b26128",
+    "kind": "work_item",
+    "title": "x",
+    "actor": {
+     "id": "vaso",
+     "kind": "human"
+    },
+    "source": "graph"
+   }
+  ],
+  "omissions": [
+   {
+    "object_id": "e0e3592349c1a7d2",
+    "kind": "bounded_chain",
+    "reason": "ланцюжок обрізано: показано 12 із 242"
+   }
+  ]
+ },
+ "facts_total": 7,
+ "native_reach_max": 5970,
+ "cairn_reach_max": 3260,
+ "typed_edges_native": 0,
+ "typed_edges_cairn": 4,
+ "boundary": "наявність рядка — легша перевірка, ніж відповідь; тут міряється ціна доступу й типізованість, і вимір НЕ доводить, що нативний шлях не зміг би",
+ "known_gap": "прозу агента журнал Claude Code не експортує, тому мотив правки у графі відсутній (reasoning: unsupported)"
+}

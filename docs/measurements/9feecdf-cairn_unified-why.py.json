@@ -1,0 +1,117 @@
+{
+ "question": "коли і чому редагувався cairn_unified/why.py, з комітом 9feecdf",
+ "target": {
+  "path": "cairn_unified/why.py",
+  "commit": "9feecdf9081108a3a4b33d2a5052f8bca15eace9",
+  "repo": "Q:/prj/cairn",
+  "store": "C:/Users/Vaso/AppData/Local/Temp/claude/55ea486e99665629/2e7f1040-a2c2-4328-8da0-090b0b1dce7d/scratchpad/snap"
+ },
+ "native": {
+  "path": "native",
+  "question": "коли і чому редагувався cairn_unified/why.py, з комітом 9feecdf",
+  "steps": [
+   {
+    "step": "ledger scan .cairn ~ why.py",
+    "chars": 816278,
+    "bytes": 863955,
+    "lines": 176,
+    "tokens_est": 204070,
+    "sha256": "93213b75c805ba07",
+    "ms": 11.4
+   },
+   {
+    "step": "git log -1 9feecdf",
+    "chars": 529,
+    "bytes": 529,
+    "lines": 7,
+    "tokens_est": 133,
+    "sha256": "f40445678e5cf45e",
+    "ms": 23.0
+   },
+   {
+    "step": "git show --name-status 9feecdf",
+    "chars": 2052,
+    "bytes": 2052,
+    "lines": 62,
+    "tokens_est": 513,
+    "sha256": "8c64260319f27e1e",
+    "ms": 24.8
+   },
+   {
+    "step": "git log -p -12 -- cairn_unified/why.py",
+    "chars": 22331,
+    "bytes": 25709,
+    "lines": 522,
+    "tokens_est": 5583,
+    "sha256": "fc0095264ec8e94f",
+    "ms": 26.9
+   },
+   {
+    "step": "git blame -- cairn_unified/why.py",
+    "chars": 56920,
+    "bytes": 60653,
+    "lines": 567,
+    "tokens_est": 14230,
+    "sha256": "47d6078c1ac6b2f2",
+    "ms": 28.0
+   }
+  ],
+  "total": {
+   "chars": 898110,
+   "bytes": 952898,
+   "lines": 1334,
+   "tokens_est": 224529,
+   "ms": 114.0
+  },
+  "boundary": "ціна сировини, не ціна рівносильної відповіді"
+ },
+ "cairn": {
+  "path": "cairn",
+  "steps": [
+   {
+    "step": "cairn why (підсумкова відповідь)",
+    "chars": 3427,
+    "bytes": 3717,
+    "lines": 1,
+    "tokens_est": 857,
+    "sha256": "38b61a370620cc31",
+    "ms": 27.0
+   },
+   {
+    "step": "mcp cairn_semantic_query",
+    "chars": 3018,
+    "bytes": 3018,
+    "lines": 1,
+    "tokens_est": 755,
+    "sha256": "38850cd19bfa69bd",
+    "ms": 13.5
+   },
+   {
+    "step": "mcp cairn_code_explore",
+    "chars": 374,
+    "bytes": 374,
+    "lines": 1,
+    "tokens_est": 94,
+    "sha256": "b99efa6137d8df85",
+    "ms": 8.3
+   }
+  ],
+  "answer": {
+   "step": "cairn why (підсумкова відповідь)",
+   "chars": 3427,
+   "bytes": 3717,
+   "lines": 1,
+   "tokens_est": 857,
+   "sha256": "38b61a370620cc31",
+   "ms": 27.0
+  },
+  "total": {
+   "chars": 6819,
+   "bytes": 7109,
+   "lines": 3,
+   "tokens_est": 1706,
+   "ms": 48.8
+  }
+ },
+ "counter": "chars/4 proxy, див. tests/measure.py"
+}

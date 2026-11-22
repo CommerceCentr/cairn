@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS relations (
     valid_from TEXT,
     valid_until TEXT,
     provenance_json TEXT NOT NULL,
+    condition_json TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rel_from ON relations(from_id, relation_type);

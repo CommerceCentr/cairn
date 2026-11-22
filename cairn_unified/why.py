@@ -179,6 +179,124 @@ def _omissions(body: dict) -> list[dict]:
     return out
 
 
+#: Скільки правок вузла показувати. Не «скільки влізе»: `--budget` ріже
+#: цей блок ПЕРШИМ, тому брати більше безпечно, а менше — означає
+#: мовчки відкинути частину історії вузла.
+NODE_CHAIN_LIMIT = 24
+
+
+def _node_chain(store, node_key: str, limit: int = NODE_CHAIN_LIMIT) -> list[dict]:
+    """Ланцюг «намір -> мотив -> правка» САМЕ цього вузла.
+
+    Докази лежать на ребрах `caused_by` (`relations.condition_json`), які
+    писав `compaction_link.link_mutations`. Раніше `why` показував замість
+    них сесійну автокомактацію — ланцюг усієї сесії, що цього вузла міг і
+    не стосуватись. Виміряно: 12 ребер вузла проти перших 12 мутацій сесії.
+
+    `rationale_source` зберігається дослівно, бо розрізняє силу доказу:
+    `agent_reasoning_same_event` проти `agent_reasoning_prior_by_seq`.
+    """
+    rows = store.read(
+        "SELECT condition_json, created_at FROM relations "
+        "WHERE from_id = ? AND relation_type = 'caused_by' "
+        "AND condition_json IS NOT NULL ORDER BY created_at, id",
+        (node_key,),
+    )
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        try:
+            cond = json.loads(row["condition_json"])
+        except (TypeError, ValueError):
+            continue
+        evidence = cond.get("evidence") or {}
+        key = str(evidence.get("event_id") or "")
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "kind": "node_change",
+            "ts": evidence.get("ts"),
+            "tool": evidence.get("tool"),
+            "path": evidence.get("path"),
+            "intent": evidence.get("intent"),
+            "intent_seq": evidence.get("intent_seq"),
+            "intent_source": evidence.get("intent_source"),
+            "motive": cond.get("rationale") or "",
+            "motive_source": evidence.get("rationale_source"),
+            "evidence_level": cond.get("evidence_level"),
+            "note": "мотив — слова агента, не доведене твердження",
+        })
+    return out[-limit:]
+
+
+def _origins(store, event_ids: list[str]) -> list[str]:
+    """Вихідні ідентифікатори подій: `causation_id`, якщо він є, інакше свій.
+
+    На машині, де подія народилася, `causation_id` порожній — тоді
+    походженням є сам ідентифікатор. Після переносу він вказує на вихідну
+    подію, тому це поле однакове на обох машинах.
+    """
+    if not event_ids:
+        return []
+    marks = ",".join("?" * len(event_ids))
+    rows = store.read(
+        f"SELECT event_id, causation_id FROM events WHERE event_id IN ({marks})",
+        tuple(event_ids))
+    by_id = {row["event_id"]: row["causation_id"] for row in rows}
+    return [by_id.get(eid) or eid for eid in event_ids]
+
+
+def _claude_journal(source_ref: str) -> Path | None:
+    """Знайти журнал Claude Code за ВІДНОСНИМ імʼям із обʼєкта.
+
+    В обʼєкті лежить лише назва файла (`source_ref`), не шлях: абсолютний
+    шлях розкривав би імʼя користувача й їхав у bundle. Корінь журналів —
+    локальна річ, тому його дає адаптер.
+    """
+    if not source_ref:
+        return None
+    try:
+        from .adapters import claude_code
+    except ImportError:
+        return None
+    for candidate in claude_code.discover():
+        if Path(candidate).name == source_ref:
+            return Path(candidate)
+    return None
+
+
+def _intent_text_from_journal(intents: list[dict], source_ref: str) -> list[dict]:
+    """Текст намірів із журналу Claude Code, звірений за sha256.
+
+    Та сама вимога, що для opencode: розбіжність хеша -> `source_changed`,
+    а не тихе підставляння поточного тексту замість того, що був.
+    """
+    journal = _claude_journal(source_ref)
+    if journal is None:
+        for item in intents:
+            item["text_source"] = "unavailable:journal_missing"
+        return intents
+    from .adapters import claude_code, normalize
+
+    from .canon import sha256_text
+
+    found = {str(event.get("message_id")): str(event.get("text") or "")
+             for event in normalize.canonical_events(claude_code.read(str(journal)))
+             if event.get("kind") == "user_intent"}
+    for item in intents:
+        text = found.get(str(item.get("message_id")))
+        if text is None:
+            item["text_source"] = "unavailable:intent_absent"
+            continue
+        if item.get("text_sha256") and sha256_text(text) != item["text_sha256"]:
+            item["text_source"] = "source_changed"
+            continue
+        item["text"] = text
+        item["text_source"] = f"{journal.name}:verified"
+    return intents
+
+
 def _resolve_intent_text(intents: list[dict], *, opencode_db: str | None) -> list[dict]:
     """Дочитати текст намірів із джерела, звіривши sha256.
 
@@ -193,7 +311,7 @@ def _resolve_intent_text(intents: list[dict], *, opencode_db: str | None) -> lis
     if not intents:
         return intents
     try:
-        from adapters import opencode
+        from .adapters import opencode
     except ImportError:
         for item in intents:
             item["text_source"] = "unavailable:adapter_missing"
@@ -281,6 +399,13 @@ def _answer_text(node: dict, groups: dict, intents: list[dict]) -> str:
             lines.append(f"       [{item.get('seq')}] {text or '(текст не збережено)'}")
     else:
         lines.append("ЧОМУ   не встановлено: намірів користувача не записано")
+    autos = groups.get("auto_compaction") or []
+    if autos:
+        sem = autos[0].get("semantic") or {}
+        shown, total = sem.get("chain_shown"), sem.get("chain_total")
+        lines.append(f"МОТИВ  слова АГЕНТА (не доведене твердження), ланок "
+                     f"{shown or 0} із {total or 0}; підстава: "
+                     f"{sem.get('basis') or '—'}")
     lines.append("МЕЖА   звʼязок доводить участь у часі й шляху, не семантичну "
                  "причину; коміт причиною не є")
     return "\n".join(lines)
@@ -383,7 +508,16 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
 
     intents = _intents(list(bodies.values()))
     if intent_text:
-        intents = _resolve_intent_text(intents, opencode_db=opencode_db)
+        # Джерело беремо з ОБʼЄКТІВ, а не припускаємо opencode: сесія могла
+        # прийти з журналу Claude Code, і тоді читати треба його.
+        sources = {str((body.get("semantic") or {}).get("source_kind") or ""):
+                   str((body.get("semantic") or {}).get("source_ref") or "")
+                   for body in bodies.values()}
+        journal_ref = sources.get("claude_code_jsonl", "")
+        if journal_ref:
+            intents = _intent_text_from_journal(intents, journal_ref)
+        else:
+            intents = _resolve_intent_text(intents, opencode_db=opencode_db)
     if commit:
         wanted = str(commit)[:7]
         for kind in ("commit_fact", "auto_compaction", "unresolved_mutations", "session"):
@@ -397,11 +531,18 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         rows = store.read(
             "SELECT revision, source_event_id, recorded_at FROM object_revisions "
             "WHERE object_id = ? ORDER BY revision", (oid,))
+        local = [r["source_event_id"] for r in rows if r["source_event_id"]][:8]
         provenance.append({
             "object_id": oid,
             "revisions": len(rows),
             # Єдине джерело для source_events — таблиця ревізій, не payload.
-            "event_ids": [r["source_event_id"] for r in rows if r["source_event_id"]][:8],
+            "event_ids": local,
+            # Походження, що ПЕРЕЖИВАЄ перенос сховища. Виміряно: після
+            # `federation restore` усі 1160 подій отримують нові локальні
+            # `event_id`, а посилання на вихідні лежить у `causation_id`.
+            # Без цього поля дві машини з тим самим змістом давали різне
+            # походження й порівняти їх було нічим.
+            "origin_event_ids": _origins(store, local),
             "first_recorded_at": rows[0]["recorded_at"] if rows else None,
         })
     head = store.read_one("SELECT MAX(seq) AS seq FROM events")
@@ -421,6 +562,24 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
                           "reason": "вузол індексований, але історії до нього немає"})
 
     text = _answer_text(node, groups, intents)
+    # Текст «чому» (ланцюг намір -> мотив -> мутація) лежить у
+    # `auto_compaction.summary`. Без нього відповідь називала джерело, але
+    # не показувала його: виміряно приладом `answer_two_ways` — 2 факти з 7,
+    # і обидва пропущені «чому» були саме тут.
+    detail = _node_chain(store, node_key)
+    if not detail:
+        # Запас для сховищ, записаних до схеми 3: там докази ребра ще не
+        # проєктувались, тому беремо сесійну автокомактацію. Вона ширша за
+        # цей вузол, і це сказано в полі `scope`.
+        for item in groups.get("auto_compaction") or []:
+            detail.append({
+                "object_id": item.get("id"),
+                "trust_class": item.get("trust_class"),
+                "kind": "agent_reasoning_chain",
+                "scope": "session",
+                "note": "ланцюг усієї сесії, не лише цього вузла",
+                "text": str(item.get("summary") or ""),
+            })
     body = {
         "question": f"коли і чому редагувався {path}"
                     + (f", з комітом {str(commit)[:7]}" if commit else ""),
@@ -429,11 +588,28 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
                  "precision": node.get("precision")},
         "answer": text,
         "chronology": chrono if chronology else [],
+        "why_detail": detail,
         "provenance": provenance,
         "ledger_seq": (head or {}).get("seq"),
         "trust": trust,
         "omissions": omissions,
         "as_of": as_of,
+        # Повнота, названа числом. Відповідь мусить казати, НАСКІЛЬКИ вона
+        # повна, інакше читач домислює це сам. Окремо позначено те, чого
+        # тут немає ЗА ЗАДУМОМ: код не повертається ніколи, його читають
+        # напряму (інакше відповідь дублювала б файл).
+        "coverage": {
+            "node_changes": len([x for x in detail if x.get("kind") == "node_change"]),
+            "user_intents": len(intents),
+            "motives_same_event": len([x for x in detail
+                                       if x.get("motive_source") == "agent_reasoning_same_event"]),
+            "motives_prior_by_seq": len([x for x in detail
+                                         if x.get("motive_source") == "agent_reasoning_prior_by_seq"]),
+            "objects_linked": len(bodies),
+            "typed_edges": len(chrono),
+            "excluded_by_design": ["source_code"],
+            "note": "вихідний код не входить у відповідь: читати файл напряму",
+        },
         "boundary": "участь у часі й шляху, не семантична причина",
     }
     if budget_chars:
@@ -470,6 +646,21 @@ def _apply_budget(body: dict, budget_chars: int) -> dict:
     """
     out = dict(body)
     notes: list[dict] = []
+
+    if _size(out) > budget_chars and out.get("why_detail"):
+        before = sum(len(item.get("text") or "") for item in out["why_detail"])
+        kept: list[dict] = []
+        for item in out["why_detail"]:
+            room = max(0, budget_chars - _size({**out, "why_detail": kept}) - 400)
+            trimmed = str(item.get("text") or "")[:room]
+            if trimmed:
+                kept.append({**item, "text": trimmed,
+                             "truncated": len(trimmed) < len(item.get("text") or "")})
+        out["why_detail"] = kept
+        after = sum(len(item.get("text") or "") for item in kept)
+        if after < before:
+            notes.append({"object_id": None, "kind": "budget",
+                          "reason": f"текст «чому» скорочено з {before} до {after} символів"})
 
     dropped = 0
     while _size(out) > budget_chars and out["chronology"]:

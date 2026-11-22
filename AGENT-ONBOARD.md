@@ -103,6 +103,8 @@ python -m cairn_unified --root <шлях> mcp tools
 ```text
 1  АГЕНТ НЕ ПІДВИЩУЄ ДОВІРУ ВЛАСНОМУ ТЕКСТУ
    trust_class агента — agent_proposed. human_authoritative і verified_system
+   агент собі поставити не може; verified_system дає лише автоперевірка,
+   яка перечитує джерело (opencode.db, журнал Claude Code або Codex).
    не можна виставити через CLI чи MCP: require_human / authority_required.
 
 2  ІМПОРТ НЕ УСПАДКОВУЄ ДОВІРУ
@@ -150,7 +152,7 @@ python -m cairn_unified --root <шлях> mcp tools
 
 ## Адаптер джерела сесій
 
-`adapters/opencode.py` — еталон: читає локальний `opencode.db` **тільки
+`cairn_unified/adapters/opencode.py` — еталон: читає локальний `opencode.db` **тільки
 на читання** (`mode=ro`). Якщо пишеш адаптер під іншого агента:
 
 ```python

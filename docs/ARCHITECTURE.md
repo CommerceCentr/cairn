@@ -1,8 +1,8 @@
 # Архітектура Cairn Unified 2.0 (чинна реалізація)
 
 Це опис **того, що працює зараз**, а не цільова специфікація. Версія
-пакета `2.0.0`, `SCHEMA_VERSION = "2.0"`, `DB_SCHEMA_VERSION = 2`
-(ревізії обʼєктів; міграція — перебудова з журналу, див.
+пакета `2.0.0`, `SCHEMA_VERSION = "2.0"`, `DB_SCHEMA_VERSION = 3`
+(ревізії обʼєктів і докази на ребрах; міграція — перебудова з журналу, див.
 [`ADR-016-envelope.md`](ADR-016-envelope.md)).
 Історичні плани лежать окремо й не є довідкою по API:
 
@@ -13,6 +13,8 @@
 
 Вступ для агента: [`AGENT-ONBOARD.md`](../AGENT-ONBOARD.md).
 Виміри: [`MEASUREMENTS.md`](MEASUREMENTS.md).
+Вигоди простою мовою: [`WHY-CAIRN.md`](WHY-CAIRN.md).
+Схема обʼєкта: [`ADR-016-envelope.md`](ADR-016-envelope.md).
 
 ---
 
@@ -58,11 +60,21 @@
 | `merge.py` | злиття того самого git-репозиторію, true git-хеші |
 | `redact.py`, `errors.py`, `canon.py` | секрети, стабільні коди помилок, канонізація |
 | `why.py` | `answer()` — коли і чому редагувався вузол: хронологія, походження, довіра, межі |
+| `adapters/normalize.py` (у пакеті) | збирач: сирі записи журналів -> канонічна форма + матриця можливостей |
 | `mcp.py`, `cli.py` | 12 MCP-інструментів і CLI `cairn2` (встановлюваний: `pyproject.toml`) |
 
-Адаптери — окремий ПАКЕТ (`adapters/__init__.py`): `opencode.py`,
-`claude_code.py`, три `_probe_*` (навмисні підробки для воріт контракту),
-`php-parser/index.php`, `fixtures/php84-demo/`. Раніше теки без
+Адаптери — ПІДПАКЕТ `cairn_unified/adapters/`: `opencode.py`,
+`claude_code.py`, `codex.py`, `normalize.py`, три `_probe_*` (навмисні
+підробки для воріт контракту), `php-parser/index.php`,
+`fixtures/php84-demo/`.
+
+Три джерела, і вони НЕ однакові. Матриця можливостей
+(`normalize.CAPABILITIES`) записує, що саме кожне доводить: Codex не дає
+структурованих мутацій (правки всередині `exec`), а прози агента не дає
+ні Claude Code, ні Codex. Автоперевірка перечитує те джерело, яке назвав
+обʼєкт (`semantic.source_kind` + `source_ref`), і межа джерела
+(`node_link_unsupported_by_source`) відокремлена від браку даних
+(`unresolved:*`). Раніше теки без
 `__init__.py` діставали через `sys.path.insert` із середини пакета —
 через це `cairn_unified` неможливо було встановити.
 

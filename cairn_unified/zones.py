@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .errors import CairnError
 from .canon import audit_digest, canonical, iso, sha256_text
 from . import federation, ledger, semantic
 
+_REPO_ID = re.compile(r"[0-9a-f]{40}")
 DEFAULT_TTL_S = 30.0
 PROTOCOL = "cairn_unified.zones/1.0"
 
@@ -142,6 +145,15 @@ def descriptor(store, zone: str, *, repo: str, pathspec: str,
                actor: dict, context_refs: list[dict] | None = None,
                context_identity: dict | None = None) -> dict:
     """Створити (або прочитати) дескриптор однієї зони."""
+    # `repo` — ТОТОЖНІСТЬ репозиторію (`code.git.identity()["id"]`,
+    # 40 шістнадцяткових символів), а НЕ шлях. `merge.inspect_merge`
+    # порівнює це поле саме з id, тож шлях тут дає відмову
+    # `repo_identity_mismatch` далеко від місця помилки — виміряно.
+    if not _REPO_ID.fullmatch(str(repo)):
+        raise CairnError(
+            "bad_repo_identity",
+            "поле repo мусить бути тотожністю репозиторію (40 hex), не шляхом",
+            exit_code=2, details={"got": str(repo)[:80]})
     root = store.root
     path = descriptor_path(root, zone)
     with _NonBlockingLock(lock_path(root, zone)) as lock:

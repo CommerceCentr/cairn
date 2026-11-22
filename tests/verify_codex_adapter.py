@@ -1,0 +1,56 @@
+"""Regression checks for Codex rollout normalization and source boundaries."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from cairn_unified.adapters import codex, normalize
+
+
+def main() -> int:
+    rows = [
+        {"timestamp": "2026-11-22T00:00:00Z", "type": "session_meta",
+         "payload": {"session_id": "test-session", "cwd": "Q:/prj/cairn"}},
+        {"timestamp": "2026-11-22T00:00:01Z", "type": "response_item",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"text": "Actual user intent"}]}},
+        {"timestamp": "2026-11-22T00:00:02Z", "type": "response_item",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"text": "<environment_context>internal"}]}},
+        {"timestamp": "2026-11-22T00:00:03Z", "type": "compacted",
+         "payload": {"retained_context": {"summary": "first"}}},
+        {"timestamp": "2026-11-22T00:00:04Z", "type": "compacted",
+         "payload": {"retained_context": {"summary": "second"}}},
+        {"timestamp": "2026-11-22T00:00:05Z", "type": "response_item",
+         "payload": {"type": "custom_tool_call", "name": "exec",
+                     "input": "Set-Content file.py value"}},
+        {"timestamp": "2026-11-22T00:00:06Z", "type": "response_item",
+         "payload": {"type": "compaction", "id": "cmp-encrypted",
+                     "encrypted_content": "opaque"}},
+    ]
+    original = codex._lines
+    codex._lines = lambda _path: iter(json.dumps(row) for row in rows)
+    try:
+        raw = list(codex.read("rollout-fixture.jsonl"))
+        events = normalize.canonical_events(raw)
+    finally:
+        codex._lines = original
+    assert len(raw) == 4
+    assert len({event["event_id"] for event in raw}) == 4
+    assert [event["kind"] for event in events] == [
+        "user_intent", "compaction", "compaction", "compaction"]
+    assert events[0]["text"] == "Actual user intent"
+    assert events[-1]["summary"] == ""
+    assert events[-1]["reason"] == "encrypted_compaction"
+    assert normalize.capabilities(normalize.SOURCE_CODEX)["mutation"].startswith(
+        "unsupported")
+    print("ВЕРДИКТ: Codex IDs, user intent, compactions and shell boundary pass")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

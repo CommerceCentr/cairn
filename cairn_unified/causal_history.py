@@ -68,7 +68,7 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
          budget_chars: int | None = None,
          zone_specs: tuple[tuple[str, str, str], ...] | None = None) -> dict:
     """Зв'язати сесію, мутації, коміт і контекст.Ідемпотентно за ключами ребер."""
-    from adapters import opencode  # локальний імпорт: без нього ядро чисте
+    from .adapters import opencode  # локальний імпорт: без нього ядро чисте
     from . import zones as zone_mod
 
     full = _git(repo_path, "rev-parse", f"{commit}^{{commit}}")
@@ -93,6 +93,8 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
     scope = sorted(set(addresses) | set(stable_keys))
 
     events = list(opencode.read(opencode_db, session_id))
+    committed_keys = compaction_link.committed_node_keys(
+        store, repo_id, repo_path, full, [path for _status, path in changed])
     anchor, anchor_before = _anchor(events, commit_ms)
     if anchor is None:
         return {"ok": False, "reason": "no_compaction_in_session",
@@ -104,11 +106,12 @@ def link(store, *, repo_path: str | Path, session_id: str, commit: str,
     roots = (Path(repo_path), *[Path(r) for r in repo_roots])
     mutations = compaction_link.link_mutations(
         store, events=events, session_obj_id=session_obj["id"], repo_id=repo_id,
-        repo_path=roots, actor=actor)
+        repo_path=roots, actor=actor, allowed_node_keys=committed_keys)
     rejected = compaction_link.unresolved_object(
         store, unresolved=mutations["unresolved"], session_obj=session_obj,
         commit=full, repo_id=repo_id, repo_roots=[str(r) for r in roots],
-        scope=scope, opencode_db=opencode_db, actor=actor)
+        scope=scope, opencode_db=opencode_db, actor=actor,
+        mutation_filter="committed_nodes")
     commit_link = compaction_link.link_commit(
         store, repo_id=repo_id, repo_path=repo_path, commit=full,
         work_id=work_id, actor=actor)

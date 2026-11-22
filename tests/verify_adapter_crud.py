@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from adapters import claude_code  # noqa: E402
+from cairn_unified.adapters import claude_code  # noqa: E402
 
 PATHS = {
     "Write": r"Q:\repo\src\written.py",
@@ -133,8 +133,17 @@ def main() -> int:
                                        for k in ("Write", "Edit"))),
             ("компактація без шляхів", [e for e in events
                                        if e["kind"] == "compact_summary"][0]["abs_paths"] == []),
-            ("проза асистента не імпортується", all(
-                not e.get("text") for e in events
+            # Проза асистента ТЕПЕР віддається (виміряно: 125 блоків на
+            # 28 435 символів викидались мовчки, і «мотив» у причинному
+            # ланцюзі завжди був порожній). Інваріант, який справді
+            # стерегли, лишається: проза не несе шляхів і не стає CrUD.
+            ("проза асистента не несе шляхів", all(
+                e.get("abs_paths") == [] for e in events
+                if e["kind"] == "message" and e["actor"] == "agent")),
+            ("проза асистента не стає мутацією", all(
+                e["actor"] != "agent" for e in events if e["kind"] == "tool_call")),
+            ("проза асистента доступна як окрема подія", any(
+                e.get("text") for e in events
                 if e["kind"] == "message" and e["actor"] == "agent")),
             ("user-намір є, але без шляхів", any(
                 e["kind"] == "message" and e["actor"] == "user"

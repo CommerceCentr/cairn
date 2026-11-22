@@ -1,0 +1,54 @@
+{
+ "repo": "cairn",
+ "portability": {
+  "ok": true,
+  "bundle_bytes": 12231,
+  "events_exported": 7,
+  "events_restored": 7,
+  "objects_before": 5,
+  "objects_after": 5,
+  "content_identical": true,
+  "doctor_ok_after_move": true,
+  "events_with_origin_link": 7,
+  "note": "перенос — копія теки або один файл-бандл; мережа не потрібна"
+ },
+ "zones": {
+  "ok": true,
+  "same_zone_second_agent": "deferred",
+  "same_zone_holder_named": "agent-a",
+  "other_zone_second_agent": "acquired",
+  "writes_requested_each": 50,
+  "writes_landed_a": 50,
+  "writes_landed_b": 50,
+  "lost_writes": 0,
+  "foreign_agent_in_busy_zone": "deferred",
+  "fence_after_release": 2,
+  "old_fence_after_release": "stale_fence",
+  "second_agent_took_over": true,
+  "api_journal_lines": 51,
+  "web_journal_lines": 50,
+  "journal_seq_strictly_growing": true,
+  "note": "зони керуються лише з Python: CLI-групи `zone` ще немає"
+ },
+ "shared_picture": {
+  "ok": true,
+  "repo_identity_checked": true,
+  "commit_links_resolved": 1,
+  "commit_links_unresolved": 0,
+  "conflicts": [],
+  "safe_to_apply": true,
+  "objects_left_before": 1,
+  "left_sees_own_fact": true,
+  "left_sees_remote_fact": true,
+  "zones_visible_on_left": [
+   "api.json",
+   "web.json"
+  ],
+  "merge_event_id": "evt_01a1fe31-9054-7825-b0b6-c189c6ed04c5",
+  "merged_events": 4,
+  "merged_context_objects": 0,
+  "merged_zones": 1,
+  "note": "merge перевіряє тотожність репозиторію і кожен хеш локально"
+ },
+ "all_ok": true
+}

@@ -37,9 +37,17 @@ SCRIPTS = (
     # контракту причин, бо його не запускали.
     "verify_compaction_link.py",
     "verify_adapter_crud.py",
+    "verify_codex_adapter.py",
+    "verify_commit_node_scope.py",
     # Нові ворота: підроблений bundle і приватність шляхів.
     "verify_bundle_tamper.py",
     "verify_why.py",
+    "verify_normalize.py",
+    "verify_sources.py",
+    "verify_surfaces.py",
+    # Переносність, зони без колізій, спільна картина — у воротах,
+    # бо саме на це питання користувач мусить мати відповідь прогоном.
+    "../tools/measure_teamwork.py",
     "verify_privacy_paths.py",
     # Непереносний: пропускається з названою причиною, не падає беззвучно.
     "verify_auto_dossier.py",
