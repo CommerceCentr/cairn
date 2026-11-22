@@ -211,13 +211,7 @@ def _omissions(body: dict) -> list[dict]:
     return out
 
 
-#: Скільки правок вузла показувати. Не «скільки влізе»: `--budget` ріже
-#: цей блок ПЕРШИМ, тому брати більше безпечно, а менше — означає
-#: мовчки відкинути частину історії вузла.
-NODE_CHAIN_LIMIT = 24
-
-
-def _node_chain(store, node_key: str, limit: int = NODE_CHAIN_LIMIT,
+def _node_chain(store, node_key: str,
                 allowed_events: set[str] | None = None) -> list[dict]:
     """Ланцюг «намір -> мотив -> правка» САМЕ цього вузла.
 
@@ -263,7 +257,7 @@ def _node_chain(store, node_key: str, limit: int = NODE_CHAIN_LIMIT,
             "evidence_level": cond.get("evidence_level"),
             "note": "мотив — слова агента, не доведене твердження",
         })
-    return out[-limit:]
+    return out
 
 
 def _origins(store, event_ids: list[str]) -> list[str]:

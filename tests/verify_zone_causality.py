@@ -57,6 +57,7 @@ def main() -> int:
             semantic.relate(store, from_id=auto, to_id=sid,
                             relation="derived_from", actor=ACTOR)
             if source == "claude_code_jsonl":
+                claude_sid = sid
                 semantic.relate(
                     store, from_id=whole, to_id=sid, relation="caused_by",
                     actor=ACTOR, condition={"basis": "tool_mutation",
@@ -86,6 +87,20 @@ def main() -> int:
         assert patch["deleted_lines"] == ["    return 1"]
         assert patch["added_lines"] == ["    return 2"]
         assert "вилучено" in second["answer"]
+        for index in range(25):
+            event_id = f"extra-edit-{index}"
+            semantic.relate(
+                store, from_id=whole, to_id=claude_sid, relation="caused_by",
+                actor=ACTOR, condition={"evidence": {"event_id": event_id,
+                                                     "path": PY_FILE}})
+            semantic.relate(
+                store, from_id=claude_sid, to_id=facts[repo["first"]],
+                relation="mutation_in_commit", actor=ACTOR,
+                condition={"event_id": event_id, "node_key": whole,
+                           "path": PY_FILE})
+        complete = why.answer(store, repo_id=ident["id"], path=PY_FILE,
+                              commit=repo["first"])
+        assert complete["coverage"]["node_changes"] == 26
         print("PASS: two commits, agent intents separated, direct mutation scoped")
         return 0
     finally:
