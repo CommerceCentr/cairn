@@ -6,13 +6,17 @@
 й архівні рішення; вони не є довідкою по командах. Чинна довідка —
 `python -m cairn_unified mcp tools` і [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+Після завершених правок, коміту або компактації виконуй
+[`MANDATE-AGENT-CAIRN-CAUSAL-HISTORY.md`](MANDATE-AGENT-CAIRN-CAUSAL-HISTORY.md):
+він описує поповнення спільної причинної історії `.cairn` для будь-якого агента.
+
 ---
 
 ## Що таке Cairn
 
 Cairn Unified — локальний Event Ledger і project graph. Жодного хмачного
 API, жодного демона, жодної зовнішньої БД. Версія пакета `2.0.0`,
-`SCHEMA_VERSION = "2.0"`, `DB_SCHEMA_VERSION = 1`.
+`SCHEMA_VERSION = "2.0"`, `DB_SCHEMA_VERSION = 3`.
 
 ```text
 .cairn/
@@ -24,7 +28,7 @@ API, жодного демона, жодної зовнішньої БД. Вер
 ```
 
 Каталог `.cairn` лежить **всередині кореня проєкту** (його визначає `Store.__init__`, а не якийсь глобальний шлях) і під `.gitignore`. Він
-переноситься разом із проєктом, але не комітиться без явного рішення людини.
+переноситься повним `federation` bundle, але не комітиться без явного рішення людини.
 
 ---
 
@@ -177,12 +181,9 @@ python tests/verify_causal_history.py
 python tests/verify_compaction_link.py
 ```
 
-Останній вимір (2026-11-21): `run_all.py` **15/15**, `verify_zones.py`
-**29/29**, `verify_merge.py` **16/16**, `verify_causal_history.py`
-**19/19**, `verify_compaction_link.py` **31/31**. Усі вони тепер у
-воротах `tests/run_all.py` (21/21) і не залежать від жодного шляху
-поза репозиторієм: раніше два з них зверталися до приватного диска й
-на іншій машині давали exit 1, а не пропуск.
+Останній вимір (2026-11-22): `tests/run_all.py` **29/29**. Повторюй цей
+прогін у власному середовищі: історичний результат не є гарантією для
+нового checkout.
 Детальніше: [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ---

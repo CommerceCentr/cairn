@@ -101,6 +101,23 @@ def main() -> int:
         complete = why.answer(store, repo_id=ident["id"], path=PY_FILE,
                               commit=repo["first"])
         assert complete["coverage"]["node_changes"] == 26
+        later_session = semantic.put_object(
+            store, object_type="session", title="later compaction", summary="later",
+            actor=ACTOR, stable_key="fixture-later-compaction",
+            semantic={"kind": "session", "session_id": "claude_code_jsonl",
+                      "source_kind": "claude_code_jsonl",
+                      "reason": "agent_compaction_after_last_mutation"})["object"]["id"]
+        semantic.relate(
+            store, from_id=later_session, to_id=facts[repo["first"]],
+            relation="mutation_in_commit", actor=ACTOR,
+            condition={"event_id": "edit-1", "node_key": whole,
+                       "path": PY_FILE, "source_kind": "claude_code_jsonl"})
+        deduped = why.answer(store, repo_id=ident["id"], path=PY_FILE,
+                             commit=repo["first"])
+        assert deduped["commit_history"][0]["direct_mutations"] == 26
+        assert deduped["zone_context"]["mutation_in_commit_edges"] == 26
+        assert deduped["zone_context"]["raw_mutation_in_commit_edges"] == 27
+        assert deduped["zone_context"]["duplicate_mutation_edges"] == 1
         print("PASS: two commits, agent intents separated, direct mutation scoped")
         return 0
     finally:

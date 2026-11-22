@@ -434,7 +434,7 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
         rows = store.read(
             "SELECT from_id, relation_type, condition_json FROM relations "
             "WHERE to_id = ? AND relation_type IN "
-            "('context_for_commit','mutation_in_commit')",
+            "('context_for_commit','mutation_in_commit') ORDER BY id",
             (fact["id"],))
         session_ids = {str(row["from_id"]) for row in rows}
         # Older stores have node->session evidence without the newer
@@ -444,6 +444,7 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
             if (body.get("semantic") or {}).get("kind") == "session"
             and (body.get("semantic") or {}).get("commit") == sha)
         events: list[dict] = []
+        seen_mutations: set[tuple[str, str, str]] = set()
         for row in rows:
             if row["relation_type"] != "mutation_in_commit":
                 continue
@@ -452,6 +453,12 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
             except (TypeError, ValueError):
                 continue
             if str(condition.get("node_key") or "") in node_keys:
+                mutation_key = (str(condition.get("event_id") or ""),
+                                str(condition.get("node_key") or ""),
+                                str(condition.get("path") or ""))
+                if mutation_key in seen_mutations:
+                    continue
+                seen_mutations.add(mutation_key)
                 events.append({"event_id": condition.get("event_id"),
                                "node_key": condition.get("node_key"),
                                "path": condition.get("path"),
@@ -592,11 +599,12 @@ def _zone_context(store, repo_id: str) -> dict:
     linked_commits: set[str] = set()
     mutation_commits: set[str] = set()
     sources: set[str] = set()
-    mutation_edges = 0
+    mutation_keys: set[tuple[str, str, str, str]] = set()
+    raw_mutation_edges = 0
     if facts:
         marks = ",".join("?" * len(facts))
         for row in store.read(
-                "SELECT from_id, to_id, relation_type FROM relations "
+                "SELECT id, from_id, to_id, relation_type, condition_json FROM relations "
                 f"WHERE to_id IN ({marks}) AND relation_type IN "
                 "('context_for_commit','mutation_in_commit')", tuple(facts)):
             linked_commits.add(str(row["to_id"]))
@@ -609,14 +617,21 @@ def _zone_context(store, repo_id: str) -> dict:
                 continue
             else:
                 mutation_commits.add(str(row["to_id"]))
-                mutation_edges += 1
+                raw_mutation_edges += 1
+                condition = json.loads(row["condition_json"] or "{}")
+                mutation_keys.add((str(row["to_id"]),
+                                   str(condition.get("event_id") or row["id"]),
+                                   str(condition.get("node_key") or ""),
+                                   str(condition.get("path") or "")))
     return {"indexed_nodes": int((symbol_counts or {}).get("nodes") or 0),
             "indexed_paths": int((symbol_counts or {}).get("paths") or 0),
             "historical_file_nodes": int((symbol_counts or {}).get("historical_files") or 0),
             "git_facts": total_git, "commits_with_session": len(linked_commits),
             "commits_with_structured_mutation": len(mutation_commits),
             "git_only_commits": max(0, total_git - len(linked_commits)),
-            "mutation_in_commit_edges": mutation_edges,
+            "mutation_in_commit_edges": len(mutation_keys),
+            "raw_mutation_in_commit_edges": raw_mutation_edges,
+            "duplicate_mutation_edges": raw_mutation_edges - len(mutation_keys),
             "agent_sources": sorted(sources)}
 
 

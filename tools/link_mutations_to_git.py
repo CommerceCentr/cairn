@@ -116,6 +116,7 @@ def verify_stored(store: Store, repo: Path, repo_id: str) -> dict:
         "JOIN objects o ON o.id = r.to_id "
         "WHERE r.relation_type = 'mutation_in_commit'")
     checked = 0
+    unique = set()
     failures = []
     for row in rows:
         fact = json.loads(row["payload_json"])
@@ -125,6 +126,8 @@ def verify_stored(store: Store, repo: Path, repo_id: str) -> dict:
         if condition.get("basis") != "unique_git_content_transition":
             continue
         checked += 1
+        unique.add((condition.get("commit"), condition.get("event_id"),
+                    condition.get("path"), condition.get("source_kind")))
         commit = str(condition.get("commit") or "")
         parent = str(condition.get("parent") or "")
         path = str(condition.get("path") or "")
@@ -144,7 +147,8 @@ def verify_stored(store: Store, repo: Path, repo_id: str) -> dict:
                     or compaction_link.sha256_text(content[offset:offset + length]) != digest):
                 failures.append({"commit": commit, "path": path,
                                  "reason": f"{side}_fragment_mismatch"})
-    return {"checked": checked, "failed": len(failures),
+    return {"checked": checked, "unique_edits": len(unique),
+            "duplicate_links": checked - len(unique), "failed": len(failures),
             "failures": failures[:20]}
 
 
@@ -268,8 +272,21 @@ def run(root: Path, repo: Path, sources: list[Path], apply: bool) -> dict:
     if apply:
         facts = {}
         actor = {"kind": "system", "id": "git-content-witness"}
+        existing = set()
+        for prior in store.read(
+                "SELECT condition_json FROM relations "
+                "WHERE relation_type = 'mutation_in_commit'"):
+            condition = json.loads(prior["condition_json"] or "{}")
+            existing.add((str(condition.get("commit") or ""),
+                          str(condition.get("event_id") or ""),
+                          str(condition.get("path") or ""),
+                          str(condition.get("source_kind") or "")))
         for row in matched:
             sha = row["commit"]
+            identity = (sha, row["event_id"], row["path"], row["source"])
+            if identity in existing:
+                counts["replayed"] += 1
+                continue
             if sha not in facts:
                 facts[sha] = compaction_link.link_commit(
                     store, repo_id=repo_id, repo_path=repo, commit=sha,
@@ -294,9 +311,10 @@ def run(root: Path, repo: Path, sources: list[Path], apply: bool) -> dict:
                            "witnesses": row["witnesses"],
                            "patch_sha256": row["patch_sha256"],
                            "source_kind": row["source"]},
-                idempotency_key=(f"content-witness:v1:{repo_id}:{sha}:"
-                                 f"{row['session_id']}:{row['event_id']}:{row['node_key']}"))
+                idempotency_key=(f"content-witness:v2:{repo_id}:{sha}:"
+                                 f"{row['source']}:{row['event_id']}:{row['node_key']}"))
             counts["linked" if not result.get("replayed") else "replayed"] += 1
+            existing.add(identity)
     return {"repo_id": repo_id, "apply": apply, "counts": dict(counts),
             "matched_commits": len({row["commit"] for row in matched}),
             "matches": [{key: row[key] for key in
