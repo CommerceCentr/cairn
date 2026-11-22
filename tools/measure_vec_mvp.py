@@ -1,4 +1,4 @@
-"""Acceptance measurements for a VEC Cairn pilot store."""
+"""Acceptance measurements for a Cairn pilot store."""
 
 from __future__ import annotations
 

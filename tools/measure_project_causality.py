@@ -16,6 +16,7 @@ from cairn_unified.why import answer
 from tools.index_agent_history import run as survey_agents
 from tools.link_mutations_to_git import verify_stored
 from tools.measure_vec_mvp import measure
+from tools.causal_scope import require_exclusive_store, require_sources
 
 
 def main() -> int:
@@ -28,14 +29,17 @@ def main() -> int:
     args = parser.parse_args()
     root, repo = args.root.resolve(), args.repo.resolve()
     store = Store.open(root)
-    repo_id = git.identity(repo)["id"]
+    source_repos = [p.resolve() for p in (args.source_repo or [repo])]
+    repo_id = require_sources(repo, source_repos)
+    zone_gate = require_exclusive_store(store, repo_id)
     baseline = measure(root, repo, args.path)
     node = answer(store, repo_id=repo_id, path=args.path)
-    source_repos = [p.resolve() for p in (args.source_repo or [repo])]
-    surveys = [survey_agents(root, p, Path(opencode.default_db()), False)
+    surveys = [survey_agents(root, p, Path(opencode.default_db()), False,
+                             allowed_roots=source_repos)
                for p in source_repos]
     report = {
         "repo_id": repo_id, "head": git.git(repo, "rev-parse", "HEAD").strip(),
+        "zone_gate": zone_gate,
         "git_commits": baseline["git_commits"],
         "git_facts": baseline["git_facts"],
         "missing_commits": baseline["missing_commits"],

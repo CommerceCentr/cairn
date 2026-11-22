@@ -33,8 +33,8 @@ from cairn_unified.canon import sha256_text  # noqa: E402
 
 SID = "ses_e0a98acebffePayGTXAEIUUJAT"
 CMP_ID = "msg_1f952a2e3001AqzjG0iOxQi8zA"   # seq 9295
-REPO = Path(r"Q:\prj\cairn")
-WORK = Path(r"Q:\prj\cairn-private")   # тут відбувались мутації цієї правки
+REPO = ROOT
+WORK = Path(os.environ.get("CAIRN_TEST_WORKTREE", str(ROOT.parent / "cairn-private")))
 ROOTS = (REPO, WORK)
 ACTOR = {"kind": "system", "id": "compaction-link-test"}
 DB = opencode.default_db()
@@ -235,7 +235,7 @@ def main() -> int:
 
         # 5. Реверс: мутація поза репо не дає ребра.
         outside = [{"kind": "mutation", "event_id": "fake:1", "session_id": SID,
-                    "seq": 999999, "ts": 1, "tool": "write", "path": r"Z:\elsewhere\x.py",
+                    "seq": 999999, "ts": 1, "tool": "write", "path": str(REPO.parent / "elsewhere" / "x.py"),
                     "status": "completed", "old_string": "", "new_string": "", "patch": ""}]
         before = len([r for r in _rels(store) if r["relation_type"] == "caused_by"])
         out_res = compaction_link.link_mutations(
@@ -266,7 +266,7 @@ def main() -> int:
             repo_path=REPO)
         bad_body = json.loads(store.read_one(
             "SELECT payload_json FROM objects WHERE id = ?", (s_obj["id"],))["payload_json"])
-        bad_body["semantic"]["opencode_db"] = r"Z:\no-such-db.sqlite"
+        bad_body["semantic"]["opencode_db"] = str(temp / "no-such-db.sqlite")
         bad = verification.check_object(store, bad_body, repo_path=REPO)
         checks.append(("верифікатор: реальне джерело пройшло",
                        any(c["check"] == "session_summary_matches" for c in good[0])))

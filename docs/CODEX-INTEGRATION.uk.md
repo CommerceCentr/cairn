@@ -1,6 +1,6 @@
 # Codex і спільне сховище Cairn
 
-Канонічний код: `Q:\prj\cairn`. Спільний проєкт Cairn: `Q:\prj\cairn-private\.cairn`. Адаптер журналу: `cairn_unified/adapters/codex.py`. Імпорт записує лише наміри, компактації, підтверджені Git-факти й доступні структуровані мутації. `read`, `grep`, пошук і перегляд не створюють причинних ребер. Зашифровану компактацію позначено без розкриття тексту.
+Код запускається з checkout Cairn (`<CAIRN>`), спільне сховище проєкту лежить у `<STORE_ROOT>/.cairn`. Адаптер журналу: `cairn_unified/adapters/codex.py`. Імпорт записує лише наміри, компактації, підтверджені Git-факти й доступні структуровані мутації. `read`, `grep`, пошук і перегляд не створюють причинних ребер. Зашифровану компактацію позначено без розкриття тексту.
 
 ## Читання й робота агента
 
@@ -9,19 +9,19 @@ Codex може викликати MCP сервер Cairn через stdio. Пр�
 ```toml
 [mcp_servers.cairn]
 command = "python"
-args = ["Q:/prj/cairn/tools/serve_shared_cairn.py", "Q:/prj/cairn-private"]
+args = ["<CAIRN>/tools/serve_shared_cairn.py", "<STORE_ROOT>"]
 startup_timeout_sec = 30
 ```
 
-Launcher завжди імпортує код із `Q:\prj\cairn`, навіть якщо Codex працює в іншому репозиторії. Корінь сховища передається явно. Перед підключенням перевірити `python -m cairn_unified --root Q:\prj\cairn-private project doctor` із публічного checkout. MCP-запити на читання не додають подій до журналу; інструменти запису додають їх за контрактом Cairn.
+Launcher завжди імпортує код із `<CAIRN>`, навіть якщо Codex працює в іншому репозиторії. Корінь сховища передається явно. Перед підключенням перевірити `python -m cairn_unified --root <STORE_ROOT> project doctor` із checkout Cairn. MCP-запити на читання не додають подій до журналу; інструменти запису додають їх за контрактом Cairn.
 
 ## Імпорт причинної хронології
 
 Для сесії, достовірно повʼязаної з комітом:
 
 ```powershell
-python Q:\prj\cairn\tools\link_agent_session.py `
-  --root Q:\prj\cairn-private --repo <repo-path> --commit <sha> `
+python <CAIRN>/tools/link_agent_session.py `
+  --root <STORE_ROOT> --repo <REPO> --commit <sha> `
   --source codex --journal <rollout.jsonl> --verify
 ```
 

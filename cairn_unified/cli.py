@@ -34,7 +34,12 @@ def _emit(obj, compact: bool = False) -> None:
         text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str)
     else:
         text = json.dumps(obj, ensure_ascii=False, indent=2, default=str)
-    print(text)
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Windows consoles often use CP1251; keep stdout valid JSON there.
+        encoding = sys.stdout.encoding or "utf-8"
+        print(text.encode(encoding, errors="backslashreplace").decode(encoding))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -424,6 +429,7 @@ def dispatch(args, actor: dict):
             address=args.address, commit=args.commit, as_of=args.as_of,
             budget_chars=args.budget, chronology=args.chronology,
             intent_text=args.intent_text, opencode_db=args.opencode_db,
+            repo_path=args.repo_path,
         )
 
     if group == "mcp":

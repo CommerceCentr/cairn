@@ -3,8 +3,8 @@
  "target": {
   "path": "cairn_unified/semantic.py",
   "commit": "9feecdf9081108a3a4b33d2a5052f8bca15eace9",
-  "repo": "Q:/prj/cairn",
-  "store": "C:/Users/Vaso/AppData/Local/Temp/claude/55ea486e99665629/2e7f1040-a2c2-4328-8da0-090b0b1dce7d/scratchpad/snap"
+  "repo": "<REPO>",
+  "store": "<PRIVATE_STORE>"
  },
  "native": {
   "path": "native",

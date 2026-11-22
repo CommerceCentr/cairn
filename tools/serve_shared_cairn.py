@@ -1,6 +1,6 @@
 """Launch Cairn's stdio MCP server from any Codex working directory.
 
-Usage: python Q:/prj/cairn/tools/serve_shared_cairn.py Q:/prj/cairn-private
+Usage: python <CAIRN>/tools/serve_shared_cairn.py <STORE_ROOT>
 The source package is resolved relative to this file, not the agent's cwd.
 """
 

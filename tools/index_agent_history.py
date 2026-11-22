@@ -1,4 +1,4 @@
-"""Import portable VEC session checkpoints and structured file mutations.
+"""Import repository-scoped session checkpoints and structured file mutations.
 
 The source journals are read locally; only compacted context and mutation
 evidence are written to Cairn. No commit relation is guessed from timestamps.
@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from cairn_unified import code, compaction_link, nodes  # noqa: E402
 from cairn_unified.adapters import claude_code, codex, normalize, opencode  # noqa: E402
+from cairn_unified.errors import CairnError  # noqa: E402
 from cairn_unified.store import Store  # noqa: E402
 
 
@@ -33,6 +34,32 @@ def _inside(path: str, repo: Path) -> bool:
         return Path(path).resolve().is_relative_to(repo.resolve())
     except (OSError, ValueError):
         return False
+
+
+def mixed_mutation_paths(events: list[dict], repo: Path,
+                         allowed_roots: list[Path] | None = None) -> bool:
+    """Reject edits in another Git repository; ignore non-repository sidecars."""
+    roots = allowed_roots or [repo]
+    target_id = code.git.identity(repo)["id"]
+    checked: dict[str, bool] = {}
+    for event in events:
+        if event.get("kind") != "mutation" or event.get("status") != "completed":
+            continue
+        path = str(event.get("path") or "")
+        if not path or any(_inside(path, root) for root in roots):
+            continue
+        parent = Path(path).resolve().parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        key = str(parent)
+        if key not in checked:
+            try:
+                checked[key] = code.git.identity(parent)["id"] != target_id
+            except (CairnError, OSError, ValueError):
+                checked[key] = False
+        if checked[key]:
+            return True
+    return False
 
 
 def _sources(repo: Path, db: Path | None):
@@ -90,13 +117,15 @@ def _descriptor(events: list[dict], name: str) -> dict:
             "reason": "no_compaction_after_last_mutation"}
 
 
-def run(root: Path, repo: Path, db: Path | None, apply: bool) -> dict:
+def run(root: Path, repo: Path, db: Path | None, apply: bool,
+        allowed_roots: list[Path] | None = None) -> dict:
     started = time.perf_counter()
     store = Store.open(root) if apply else None
     identity = code.git.identity(repo)
     repo_id = identity["id"]
     report = {"repo_id": repo_id, "sources": {}, "sessions_seen": 0,
               "sessions_with_mutations": 0, "sessions_indexed": 0,
+              "mixed_sessions_skipped": 0,
               "mutations_seen": 0,
               "mutations_resolved": 0, "mutations_unresolved": 0,
               "compactions_after_last_mutation": 0,
@@ -111,6 +140,9 @@ def run(root: Path, repo: Path, db: Path | None, apply: bool) -> dict:
         except (OSError, ValueError, RuntimeError) as exc:
             report.setdefault("errors", []).append({"journal": journal.name,
                                                      "source": source, "error": str(exc)[:200]})
+            continue
+        if mixed_mutation_paths(events, repo, allowed_roots):
+            report["mixed_sessions_skipped"] += 1
             continue
         mutations = [e for e in events if e.get("kind") == "mutation"
                      and _inside(str(e.get("path") or ""), repo)]

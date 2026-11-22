@@ -5,7 +5,7 @@
 `git log -p -12` + `git blame`. Нічого не змінює: усі команди читальні.
 
     python tests/baseline_native.py tests/run_all.py --commit 942cb526 \
-        --repo Q:/prj/cairn --root Q:/prj/cairn-private
+        --repo <REPO> --root <STORE_ROOT>
 
 МЕЖА: це ціна СИРОВИНИ, не ціна рівносильної відповіді. Нативний шлях тут
 не намагається відтворити причину — він лише дає матеріал, з якого людина

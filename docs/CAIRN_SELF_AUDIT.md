@@ -1,15 +1,21 @@
 # Самоперевірка причинної історії Cairn
 
-Сховище цього проєкту розміщено в `Q:\prj\cairn\.cairn`. Воно спільне для
+Актуальний контрольний зріз після `dc0f95e` і релізних правок:
+[CAIRN_RELEASE_EVIDENCE.md](CAIRN_RELEASE_EVIDENCE.md). Числа 24/24 і 25/25
+нижче є архівними; поточний вимір має 26/26 комітів і 974 події.
+
+Сховище цього проєкту розміщено в `<REPO>/.cairn`. Воно спільне для
 агентів на цій машині й не входить до Git (`.cairn/` ігнорується). Експортний
 пакет зберігається окремо як приватний артефакт.
 
 ## Явна синхронізація після змін
 
-Запускати з `Q:\prj\cairn` після редагувань або появи нового коміту:
+Запускати з checkout Cairn після редагувань або появи нового коміту.
+`<REPO>` — корінь Git-проєкту, `<WORKTREE>` — інший checkout тієї самої
+історії, `<BUNDLE>` — приватний файл поза публічним Git:
 
 ```powershell
-python tools/sync_project_causality.py --root Q:\prj\cairn --repo Q:\prj\cairn --source-repo Q:\prj\cairn --source-repo Q:\prj\cairn-private --bundle Q:\prj\cairn-private\cairn-self-audit-bundle.json
+python tools/sync_project_causality.py --root <REPO> --repo <REPO> --source-repo <REPO> --source-repo <WORKTREE> --bundle <BUNDLE>
 ```
 
 Команда індексує лише Git-версію вузлів, додає нові Git-факти, імпортує
@@ -20,14 +26,14 @@ python tools/sync_project_causality.py --root Q:\prj\cairn --repo Q:\prj\cairn -
 Звіт без запису до сховища:
 
 ```powershell
-python tools/measure_project_causality.py --root Q:\prj\cairn --repo Q:\prj\cairn --source-repo Q:\prj\cairn --source-repo Q:\prj\cairn-private --path cairn_unified/why.py --out Q:\prj\cairn-private\cairn-self-audit-report.json
+python tools/measure_project_causality.py --root <REPO> --repo <REPO> --source-repo <REPO> --source-repo <WORKTREE> --path cairn_unified/why.py --out <PRIVATE_REPORT>
 ```
 
 На іншій машині в чистому клоні тієї ж Git-історії:
 
 ```powershell
-python -m cairn_unified federation restore C:\transfer\cairn-self-audit-bundle.json D:\prj\cairn
-python tools/link_mutations_to_git.py --root D:\prj\cairn --repo D:\prj\cairn --verify
+python -m cairn_unified federation restore <BUNDLE> <CLEAN_CLONE>
+python tools/link_mutations_to_git.py --root <CLEAN_CLONE> --repo <CLEAN_CLONE> --verify
 ```
 
 Відновлення не потребує сирих журналів агентів. Для нових правок на іншій
@@ -96,8 +102,12 @@ Git-версії файлу. Семантичний мотив береться 
 журнал не містить достатнього тексту, збіг неунікальний або правка ще не
 увійшла до коміту, зв'язок з комітом не створюється. Тому 16 із 25 комітів
 поки мають тільки Git-контекст. Виконавець команди `git commit` для
-`17dfc194` невстановлений: у локальному журналі немає виконаної дії коміту
-з цим SHA; зв'язок правок із комітом доведено за вмістом, а не за тим,
-хто й коли виконав команду. Локальні журнали не входять до пакета;
+`17dfc194` невстановлений: у доступних журналах Codex, Claude Code й
+OpenCode немає виклику коміту з цим SHA. Це не загальна відсутність таких
+дій — у журналах Codex зафіксовано явні виклики `git commit -m`, чиї
+повідомлення збігаються з суб'єктами комітів `0af254e5`, `42fe48e5`,
+`ac0ab7f1` і `702dab76`; успішність самої команди окремо не перевірено.
+Зв'язок правок із комітом доведено за вмістом, а не за тим, хто й коли
+виконав команду. Локальні журнали не входять до пакета;
 збережені фрагментні хеші й позиції повторно перевіряються за Git, але
 особу власника агентського акаунта вони не засвідчують.

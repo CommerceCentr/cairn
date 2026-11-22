@@ -25,7 +25,7 @@ from cairn_unified import code, context, history, nodes, semantic, work  # noqa:
 from cairn_unified.store import Store  # noqa: E402
 
 # Приватного диска тут більше немає: тест стоїть у воротах CI, а виміряно,
-# що без `Q:\650\home` він давав exit 1, а не пропуск.
+# що без приватного диска автора він давав exit 1, а не пропуск.
 FILE = PHP_FILE
 WHOLE = f"whole:{FILE}"
 H = {"kind": "human", "id": "was-human"}

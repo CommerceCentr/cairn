@@ -1,0 +1,39 @@
+{
+  "format": "cairn-release-evidence/1",
+  "scope": "one_repository_zone",
+  "repo_id": "80807f275a7c89c3d6868df1cde5e57c2e66049d",
+  "head": "dc0f95eee70f0ba31e18555e96b3f64adeca6ef5",
+  "node_path": "cairn_unified/why.py",
+  "checks": {
+    "exclusive_zone": true,
+    "no_excluded_repo_paths": true,
+    "public_git_history_clean": false,
+    "bundle_integrity": true,
+    "bundle_matches_store": true,
+    "all_git_commits_indexed": true,
+    "node_commit_coverage": true,
+    "witnesses_verify": true,
+    "doctor": true
+  },
+  "passed": false,
+  "git_commits": 26,
+  "indexed_git_commits": 26,
+  "node_git_commits": 7,
+  "node_indexed_commits": 7,
+  "events": 974,
+  "witness_edges": 115,
+  "unique_witnessed_edits": 94,
+  "duplicate_witness_edges": 21,
+  "bundle_digest": "sha256:4b243d42dde34376398c18ea990ca5bf24ad699e6a8794810110a9d3cd5693df",
+  "excluded_repo_path_occurrences": 0,
+  "public_git_history": {
+    "commits_scanned": 26,
+    "commits_with_machine_paths": 26
+  },
+  "privacy": "numeric_allowlist_only; no session text or raw bundle",
+  "limits": [
+    "content transition proves participation, not semantic motive",
+    "account ownership is not cryptographically verified",
+    "second-device merge is not verified by this local run"
+  ]
+}

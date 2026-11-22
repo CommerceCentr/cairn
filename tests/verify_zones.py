@@ -98,7 +98,7 @@ def main() -> int:
             store, object_type="observation", title="session summary proxy",
             summary="compaction summary", actor=A, stable_key="zone-session-proxy",
             semantic={"kind": "session", "session_id": "ses-portable",
-                      "summary_sha256": "ab" * 32, "compaction_message_id": "msg-portable", "opencode_db": r"C:\fake\opencode.db"},
+                      "summary_sha256": "ab" * 32, "compaction_message_id": "msg-portable", "opencode_db": str(Path(tmp) / "fake" / "opencode.db")},
         )["object"]
         refs = zones.object_refs(store, [proxy["id"]])
         zones.descriptor(store, "beta.loc", repo="a" * 40, pathspec="*.php", actor=A,

@@ -181,10 +181,11 @@ python tests/verify_causal_history.py
 python tests/verify_compaction_link.py
 ```
 
-Останній вимір (2026-11-22): `tests/run_all.py` **29/29**. Повторюй цей
+Останній вимір (2026-11-22): `tests/run_all.py` **31/31**. Повторюй цей
 прогін у власному середовищі: історичний результат не є гарантією для
 нового checkout.
-Детальніше: [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
+Детальніше: [`docs/CAIRN_RELEASE_EVIDENCE.md`](docs/CAIRN_RELEASE_EVIDENCE.md)
+і [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ---
 

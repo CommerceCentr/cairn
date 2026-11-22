@@ -269,8 +269,8 @@ allow                            пропускає, але ДРУКУЄ «ПО�
 хешем `942cb5264107ae56b92aa16eb1f00cb34a71d83b`, коли цей вузол
 редагувався і чому?»*
 
-Вимір 2026-11-21 на приватному сховищі `Q:\prj\cairn-private`
-(151 об'єкт, 1 800 ребер, 1 876 подій) і публічному git `Q:\prj\cairn`.
+Вимір 2026-11-21 на приватному сховищі `<PRIVATE_STORE>`
+(151 об'єкт, 1 800 ребер, 1 876 подій) і публічному Git checkout `<REPO>`.
 Час — `time.perf_counter`, розмір — байти реального виводу, токени —
 `chars ÷ 4` (та сама оцінка, що й у README). Відтворити:
 `measure_context_paths.py` у `%TEMP%\opencode`. Час — один прогон:
@@ -301,7 +301,7 @@ allow                            пропускає, але ДРУКУЄ «ПО�
 числа нічим. Тепер прилад у репозиторії:
 
 ```powershell
-python tests/compare_why.py tests/run_all.py --commit 942cb5264107ae56b92aa16eb1f00cb34a71d83b --repo Q:/prj/cairn --root Q:/prj/cairn-private --budget 8000
+python tests/compare_why.py tests/run_all.py --commit 942cb5264107ae56b92aa16eb1f00cb34a71d83b --repo <REPO> --root <PRIVATE_STORE> --budget 8000
 ```
 
 Обидва шляхи міряються **одним лічильником в одному прогоні**

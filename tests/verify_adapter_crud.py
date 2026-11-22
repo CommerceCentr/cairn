@@ -19,11 +19,11 @@ sys.path.insert(0, str(ROOT))
 from cairn_unified.adapters import claude_code  # noqa: E402
 
 PATHS = {
-    "Write": r"Q:\repo\src\written.py",
-    "Edit": r"Q:\repo\src\edited.py",
-    "Read": r"Q:\repo\src\read_only.py",
-    "Grep": r"Q:\repo\src",
-    "Glob": r"Q:\repo\src",
+    "Write": str(ROOT / "src" / "written.py"),
+    "Edit": str(ROOT / "src" / "edited.py"),
+    "Read": str(ROOT / "src" / "read_only.py"),
+    "Grep": str(ROOT / "src"),
+    "Glob": str(ROOT / "src"),
 }
 
 

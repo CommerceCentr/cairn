@@ -3,8 +3,8 @@
  "target": {
   "path": "tests/run_all.py",
   "commit": "942cb5264107ae56b92aa16eb1f00cb34a71d83b",
-  "repo": "Q:/prj/cairn",
-  "store": "Q:/prj/cairn-private"
+  "repo": "<REPO>",
+  "store": "<PRIVATE_STORE>"
  },
  "native": {
   "path": "native",

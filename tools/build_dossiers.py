@@ -1,14 +1,14 @@
 """Генерація компактованих досьє для зон, заданих АРГУМЕНТАМИ.
 
 Був `tests/build_all_dossiers.py` — не тест, а генератор із побічними
-ефектами, прописаний на приватний диск автора (`Q:\\650\\home`, чотири
+ефектами, прописаний на приватний диск автора (чотири
 реальні імена зон). У теці `tests/` він створював враження перевірки,
 хоча нічого не перевіряв, і на будь-якій іншій машині падав.
 
 Тепер шляхи приходять аргументами, і нічого не припускається:
 
     python tools/build_dossiers.py --out ./packs \\
-        --zone beta.loc=../home/beta.loc \\
+        --zone sample=../sample-project \\
         --zone cairn=.:*.py
 
 Формат `--zone <імʼя>=<шлях>[:<pathspec>]`. `pathspec` за замовчуванням
@@ -36,7 +36,7 @@ def parse_zone(raw: str) -> tuple[str, Path, str, int]:
     name, _, rest = raw.partition("=")
     pathspec = "*.php"
     # Розділювач pathspec шукаємо з кінця й лише після роздільника шляху,
-    # щоб не зіпсувати `C:\...` на Windows.
+    # щоб не зіпсувати літеру диска й двокрапку на Windows.
     head, sep, tail = rest.rpartition(":")
     if sep and ("*" in tail or "." in tail) and "/" not in tail and "\\" not in tail:
         rest, pathspec = head, tail

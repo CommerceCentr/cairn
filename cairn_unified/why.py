@@ -750,7 +750,7 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
            address: str | None = None, commit: str | None = None,
            as_of: str | None = None, budget_chars: int | None = None,
            chronology: bool = True, intent_text: bool = False,
-           opencode_db: str | None = None) -> dict:
+           opencode_db: str | None = None, repo_path: str | None = None) -> dict:
     """Шість полів: answer, chronology, provenance, trust, omissions, cost."""
     from . import nodes
 
@@ -942,6 +942,33 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
                  and item.get("object_id") in bodies for item in chrono)
     zone = _zone_context(store, repo_id)
     text = _answer_text(node, groups, intents, direct, history, zone)
+    freshness = {"status": "local_git_unavailable"}
+    if not as_of:
+        from .code import git as git_mod
+        stored_repo = store.read_one(
+            "SELECT path FROM repositories WHERE id = ?", (repo_id,))
+        candidate = repo_path or str(stored_repo["path"] if stored_repo else "")
+        if candidate:
+            try:
+                if git_mod.identity(candidate)["id"] == repo_id:
+                    local_head = git_mod.head(candidate)
+                    indexed = {str(row["commit"]) for row in (
+                        json.loads(item["payload_json"]) for item in store.read(
+                            "SELECT payload_json FROM events WHERE event_type = 'git.commit_indexed' "
+                            "AND aggregate_id = ?", (repo_id,)))}
+                    missing = local_head not in indexed or (
+                        bool(commit) and not any(sha.startswith(str(commit)) for sha in indexed))
+                    freshness = {"status": "stale" if missing else "current",
+                                 "local_head": local_head, "indexed_head": local_head in indexed,
+                                 "requested_commit_indexed": (None if not commit else any(
+                                     sha.startswith(str(commit)) for sha in indexed))}
+                else:
+                    freshness = {"status": "repo_identity_mismatch"}
+            except (OSError, ValueError, CairnError):
+                pass
+    if freshness["status"] == "stale":
+        text = ("СХОВИЩЕ ЗАСТАРІЛЕ: локальний Git містить коміт, якого немає "
+                "в Cairn; запусти sync_project_causality перед висновком.\n" + text)
     unlinked_changes = sum(item.get("event_id") not in linked_events
                            for item in detail)
     if unlinked_changes:
@@ -971,6 +998,7 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         "why_detail": detail,
         "commit_history": history,
         "zone_context": zone,
+        "freshness": freshness,
         "provenance": provenance,
         "ledger_seq": (head or {}).get("seq"),
         "trust": trust,
@@ -1027,6 +1055,8 @@ def _apply_budget(body: dict, budget_chars: int) -> dict:
     2 000 символів і віддавала 6 600 — бюджет був оголошений, але не
     виконувався.
     """
+    # Leave room for the cost envelope appended by answer().
+    budget_chars = max(0, budget_chars - 250)
     out = dict(body)
     notes: list[dict] = []
 
@@ -1070,6 +1100,61 @@ def _apply_budget(body: dict, budget_chars: int) -> dict:
                         "by_freshness": fresh, "detail": "згорнуто через бюджет"}
         notes.append({"object_id": None, "kind": "budget",
                       "reason": "довіру згорнуто до лічильників за класами"})
+
+    if _size(out) > budget_chars and out.get("commit_history"):
+        compact_history = []
+        for item in out["commit_history"]:
+            reduced = dict(item)
+            patches = []
+            for patch in item.get("patches") or []:
+                copy = dict(patch)
+                for key in ("deleted_lines", "added_lines"):
+                    lines = list(copy.get(key) or [])
+                    copy[f"{key}_total"] = len(lines)
+                    copy[key] = lines[:2]
+                patches.append(copy)
+            reduced["patches"] = patches
+            reduced["node_changes"] = [
+                {key: value for key, value in change.items()
+                 if key not in {"text", "motive", "intent"}}
+                for change in item.get("node_changes") or []]
+            compact_history.append(reduced)
+        out["commit_history"] = compact_history
+        notes.append({"object_id": None, "kind": "budget",
+                      "reason": "історію коміту скорочено; повні вилучені й додані рядки "
+                                "доступні без --budget"})
+
+    if _size(out) + len(json.dumps(notes, ensure_ascii=False)) > budget_chars:
+        lines = str(out.get("answer") or "").splitlines()
+        shown = 0
+        kept = []
+        for line in lines:
+            if line.startswith("          - "):
+                shown += 1
+                if shown > 2:
+                    continue
+            kept.append(line)
+        if len(kept) < len(lines):
+            out["answer"] = "\n".join(kept)
+            notes.append({"object_id": None, "kind": "budget",
+                          "reason": "у короткій відповіді показано лише 2 вилучені рядки; "
+                                    "повний текст доступний без --budget"})
+
+    if (_size(out) + len(json.dumps(notes, ensure_ascii=False)) > budget_chars
+            and out.get("commit_history")):
+        for item in out["commit_history"]:
+            item["message"] = str(item.get("message") or "")[:160]
+            item["mutations_for_node"] = [
+                {key: value for key, value in mutation.items()
+                 if key in {"event_id", "node_key"}}
+                for mutation in item.get("mutations_for_node") or []]
+            item["node_changes"] = [
+                {key: value for key, value in change.items()
+                 if key in {"event_id", "motive_source", "intent_source"}}
+                for change in item.get("node_changes") or []]
+            for patch in item.get("patches") or []:
+                patch["deleted_lines"] = patch.get("deleted_lines", [])[:1]
+                patch["added_lines"] = patch.get("added_lines", [])[:1]
 
     out["omissions"] = [*out["omissions"], *notes]
     size = _size(out)

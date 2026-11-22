@@ -172,7 +172,7 @@ def main() -> int:
 
         # Реверс: хибне джерело не підтверджує сесію.
         bad = json.loads(json.dumps(_object(store, objects[0])))
-        bad["semantic"]["opencode_db"] = r"Z:\no-such-db.sqlite"
+        bad["semantic"]["opencode_db"] = str(temp / "no-such-db.sqlite")
         bad_res = verification.check_object(store, bad, repo_path=repo)
         # Контракт став точнішим: «джерела немає» (unresolved) окремо від
         # «перевірка впала» (verifier_error). Тут файла немає -> unresolved.

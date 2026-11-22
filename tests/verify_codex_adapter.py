@@ -10,11 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from cairn_unified.adapters import codex, normalize
 
+FIXTURE_REPO = Path(__file__).resolve().parents[1].as_posix()
+
 
 def main() -> int:
     rows = [
         {"timestamp": "2026-11-22T00:00:00Z", "type": "session_meta",
-         "payload": {"session_id": "test-session", "cwd": "Q:/prj/cairn"}},
+         "payload": {"session_id": "test-session", "cwd": FIXTURE_REPO}},
         {"timestamp": "2026-11-22T00:00:01Z", "type": "response_item",
          "payload": {"type": "message", "role": "user",
                      "content": [{"text": "Actual user intent"}]}},
@@ -34,12 +36,12 @@ def main() -> int:
         {"timestamp": "2026-11-22T00:00:07Z", "type": "event_msg",
          "payload": {"type": "item_completed", "item": {"id": "edit-1",
                      "type": "FileChange", "status": "completed",
-                     "changes": {"Q:/prj/cairn/a.py": {
+                     "changes": {f"{FIXTURE_REPO}/a.py": {
                          "type": "update", "unified_diff": "@@ -1 +1 @@\n-old\n+new\n"}}}}},
         {"timestamp": "2026-11-22T00:00:08Z", "type": "event_msg",
          "payload": {"type": "item_completed", "item": {"id": "edit-failed",
                      "type": "FileChange", "status": "failed",
-                     "changes": {"Q:/prj/cairn/b.py": {"type": "update"}}}}},
+                     "changes": {f"{FIXTURE_REPO}/b.py": {"type": "update"}}}}},
     ]
     original = codex._lines
     codex._lines = lambda _path: iter(json.dumps(row) for row in rows)

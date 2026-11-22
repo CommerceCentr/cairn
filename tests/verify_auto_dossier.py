@@ -30,14 +30,13 @@ except ModuleNotFoundError as exc:                          # noqa: F401
           "(приватний вимірювальний набір)")
     raise SystemExit(0) from None
 
-REPO = Path(os.environ.get("CAIRN_DOSSIER_REPO", r"Q:\650\home\beta.loc"))
+REPO = Path(os.environ.get("CAIRN_DOSSIER_REPO", ""))
 FILE = "core/Engine/Controller.php"
 WHOLE = f"whole:{FILE}"
-PACKS = Path(os.environ.get("CAIRN_DOSSIER_PACKS",
-                           r"Q:\650\home\_archivist\packs_python"))
+PACKS = Path(os.environ.get("CAIRN_DOSSIER_PACKS", ""))
 
-if not REPO.exists() or not PACKS.exists():
-    print(f"SKIP verify_auto_dossier: немає {REPO} або {PACKS} "
+if not os.environ.get("CAIRN_DOSSIER_REPO") or not os.environ.get("CAIRN_DOSSIER_PACKS") or not REPO.exists() or not PACKS.exists():
+    print("SKIP verify_auto_dossier: немає приватних вхідних даних "
           "(задати CAIRN_DOSSIER_REPO / CAIRN_DOSSIER_PACKS)")
     raise SystemExit(0)
 H = {"kind": "human", "id": "observer"}

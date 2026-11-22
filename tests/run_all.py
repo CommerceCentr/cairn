@@ -44,6 +44,7 @@ SCRIPTS = (
     "verify_bundle_tamper.py",
     "verify_why.py",
     "verify_zone_causality.py",
+    "verify_causal_release_scope.py",
     "verify_normalize.py",
     "verify_sources.py",
     "verify_surfaces.py",
@@ -51,6 +52,7 @@ SCRIPTS = (
     # бо саме на це питання користувач мусить мати відповідь прогоном.
     "../tools/measure_teamwork.py",
     "verify_privacy_paths.py",
+    "verify_public_paths.py",
     # Непереносний: пропускається з названою причиною, не падає беззвучно.
     "verify_auto_dossier.py",
     "benchmark_unified.py",

@@ -16,7 +16,8 @@ from cairn_unified import compaction_link, semantic
 from cairn_unified.adapters import opencode
 from cairn_unified.code import git
 from cairn_unified.store import Store
-from tools.index_agent_history import _events, _sources
+from tools.causal_scope import require_sources
+from tools.index_agent_history import _events, _sources, mixed_mutation_paths
 
 
 def _time(value: str):
@@ -154,7 +155,7 @@ def verify_stored(store: Store, repo: Path, repo_id: str) -> dict:
 
 def run(root: Path, repo: Path, sources: list[Path], apply: bool) -> dict:
     store = Store.open(root)
-    repo_id = git.identity(repo)["id"]
+    repo_id = require_sources(repo, sources)
     archive = [json.loads(row["payload_json"]) for row in store.read(
         "SELECT payload_json FROM events WHERE event_type = 'git.commit_indexed' "
         "AND aggregate_id = ?", (repo_id,))]
@@ -180,6 +181,9 @@ def run(root: Path, repo: Path, sources: list[Path], apply: bool) -> dict:
         for source, journal, source_sid in _sources(
                 source_repo, Path(opencode.default_db())):
             events = _events(source, journal, source_sid)
+            if mixed_mutation_paths(events, source_repo, sources):
+                counts["mixed_sessions_skipped"] += 1
+                continue
             for event in events:
                 if event.get("kind") != "mutation" or event.get("status") != "completed":
                     continue

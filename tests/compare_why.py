@@ -1,7 +1,7 @@
 """Два шляхи до однієї відповіді, виміряні одним лічильником в одному прогоні.
 
     python tests/compare_why.py tests/run_all.py --commit 942cb526 \
-        --repo Q:/prj/cairn --root Q:/prj/cairn-private
+        --repo <REPO> --root <STORE_ROOT>
 
 Друкує дві колонки — native і cairn — і відношення між ними. Відношення
 подаються з НАЗВАНОЮ межею, бо їх дві й вони різні:

@@ -17,6 +17,7 @@ from cairn_unified.store import Store
 from tools.index_agent_history import run as index_agents
 from tools.index_git_archive import run as index_git
 from tools.link_mutations_to_git import run as link_evidence, verify_stored
+from tools.causal_scope import require_exclusive_store, require_sources
 
 
 def main() -> int:
@@ -29,9 +30,11 @@ def main() -> int:
     root, repo = args.root.resolve(), args.repo.resolve()
     sources = [path.resolve() for path in (args.source_repo or [repo])]
     store = Store.open(root)
-    repo_id = git.identity(repo)["id"]
+    repo_id = require_sources(repo, sources)
     if not store.read_one("SELECT id FROM repositories WHERE id = ?", (repo_id,)):
         raise SystemExit("repository not registered; run `repo add` first")
+    if args.bundle:
+        require_exclusive_store(store, repo_id)
     report = {"repo_id": repo_id, "head": git.git(repo, "rev-parse", "HEAD").strip()}
     report["nodes"] = nodes.index(
         store, repo_id, {"kind": "system", "id": "project-causality-sync"},
@@ -39,12 +42,14 @@ def main() -> int:
     report["git"] = index_git(root, repo)
     report["agent_sources"] = []
     for source_repo in sources:
-        result = index_agents(root, source_repo, Path(opencode.default_db()), True)
+        result = index_agents(root, source_repo, Path(opencode.default_db()), True,
+                              allowed_roots=sources)
         report["agent_sources"].append({"repo": str(source_repo), **result})
     report["witnesses"] = link_evidence(root, repo, sources, True)
     report["witness_verification"] = verify_stored(store, repo, repo_id)
     report["doctor_ok"] = store.doctor()["ok"]
     if args.bundle:
+        report["zone_gate"] = require_exclusive_store(store, repo_id)
         bundle = export_bundle(store, path=args.bundle.resolve())
         report["bundle"] = {"path": str(args.bundle.resolve()),
                             "events": bundle["event_count"],

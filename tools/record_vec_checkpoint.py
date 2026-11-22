@@ -1,4 +1,4 @@
-"""Record a VEC Git checkpoint and local artifact inventory in Cairn."""
+"""Record a Git checkpoint and local artifact inventory in Cairn."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def run(root: Path, repo: Path) -> dict:
                                                  sort_keys=True).encode("utf-8")).hexdigest()
     payload = {
         "repo_id": repo_id, "commit": commit,
-        "intent": "На прохання власника зафіксувати код і документацію VEC для прототипу Cairn; великі локальні артефакти описати окремо.",
+        "intent": "Record the current Git checkpoint and inventory excluded local artifacts.",
         "source": "current_codex_user_instruction", "scope": "git_checkpoint_and_local_inventory",
         "committed_paths": len(changed), "excluded_paths": len(entries),
         "excluded_bytes": total_bytes, "excluded_manifest_sha256": manifest_digest,

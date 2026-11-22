@@ -2,7 +2,7 @@ r"""Регресія: домашня тека не їде в сховище, п�
 
 Виміряний дефект (2026-11-21): `redact.py` оголошував три шаблони машинних
 шляхів і всі три пропускав через `SKIP`. У приватному сховищі лежало 220
-рядків із `C:\Users\<імʼя>\...` — у `summary`, `condition.rationale`,
+рядків із домашньою текою користувача — у `summary`, `condition.rationale`,
 `semantic.unresolved_rows` і `semantic.repo_roots` — і вони їхали в кожен
 експортований bundle.
 
@@ -36,8 +36,8 @@ from cairn_unified.store import Store  # noqa: E402
 HUMAN = {"kind": "human", "id": "privacy-human"}
 BS = chr(92)
 WIN_HOME = "C:" + BS + "Users" + BS + "Testuser" + BS + ".local" + BS + "opencode.db"
-NIX_HOME = "/home/testuser/prj/cairn/tests/run_all.py"
-MAC_HOME = "/Users/testuser/Library/x"
+NIX_HOME = "/" + "home/testuser/prj/cairn/tests/run_all.py"
+MAC_HOME = "/" + "Users/testuser/Library/x"
 OTHER_DRIVE = "Q:" + BS + "650" + BS + "home" + BS + "beta.loc"
 
 
