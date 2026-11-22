@@ -69,6 +69,12 @@ def main() -> int:
         print("2. ЕКСПОРТ БАНДЛА")
         semantic.put_object(sa, object_type="decision", title="DEC-FED-001",
                             summary="share this decision", stable_key="DEC-FED-001", actor=HUMAN)
+        semantic.put_object(sa, object_type="session", title="portable checkpoint",
+                            summary="cause text stored inside Cairn", actor=HUMAN,
+                            stable_key="portable-session",
+                            semantic={"kind": "session", "source_kind": "fixture"})
+        semantic.relate(sa, from_id="portable-session", to_id="DEC-FED-001",
+                        relation="derived_from", actor=HUMAN)
         bundle = federation.export_bundle(sa, path=temp / "bundle.json")
         ok("ланцюжок бандла цілий", bundle["chain_ok"] is True)
         ok("digest бандла стабільний",
@@ -87,10 +93,25 @@ def main() -> int:
            f"{applied['applied_count']}/{len(report['new'])}")
         imported = sb.read_one("SELECT * FROM objects WHERE id = ?", ("DEC-FED-001",))
         ok("об'єкт з'явився в іншій репліці", imported is not None)
+        portable = sb.read_one("SELECT summary FROM objects WHERE id = ?",
+                               ("portable-session",))
+        relation = sb.read_one("SELECT id FROM relations WHERE from_id = ? AND to_id = ?",
+                               ("portable-session", "DEC-FED-001"))
+        ok("текст і зв'язок checkpoint фізично перенесено",
+           portable and portable["summary"] == "cause text stored inside Cairn"
+           and relation is not None)
         ok("довіра збереглась", imported["trust_class"] == "human_authoritative")
         again = federation.import_bundle(sb, loaded, HUMAN)
         ok("повторний імпорт — лише дублікати",
            len(again["new"]) == 0 and len(again["duplicates"]) == len(report["new"]))
+        return_bundle = federation.export_bundle(sb)
+        back = federation.import_bundle(sa, return_bundle, HUMAN)
+        ok("повернення з B не імпортує відлуння подій A",
+           len(back["new"]) == 1 and len(back["duplicates"]) == len(bundle["events"]))
+        federation.import_bundle(sa, return_bundle, HUMAN, apply=True)
+        round_trip = federation.import_bundle(sb, federation.export_bundle(sa), HUMAN)
+        ok("повторний двосторонній обмін ідемпотентний",
+           len(round_trip["new"]) == 0)
 
         print("4. КОНФЛІКТ ЗАХИЩЕНОГО ПОЛЯ")
         semantic.put_object(sb, object_type="decision", title="DEC-FED-002",

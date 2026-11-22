@@ -22,6 +22,14 @@ PROTECTED = frozenset({
 })
 
 
+def _origin_id(event: dict) -> str:
+    """Stable origin across repeated exports; ordinary causation is not origin."""
+    key = str(event.get("idempotency_key") or "")
+    if key.startswith("fed:") and event.get("causation_id"):
+        return str(event["causation_id"])
+    return str(event.get("event_id") or "")
+
+
 def bundle_events(bundle: dict) -> list[dict]:
     """Події bundle після перевірки ФОРМИ, до перевірки змісту.
 
@@ -85,14 +93,11 @@ def load_bundle(path: str | Path) -> dict:
 def inspect(store, bundle: dict) -> dict:
     events = bundle_events(bundle)
     local_rows = store.read(
-        "SELECT event_id, aggregate_id, payload_hash, payload_json, causation_id FROM events"
+        "SELECT event_id, aggregate_id, payload_hash, payload_json, "
+        "causation_id, idempotency_key FROM events"
     )
-    local_ids = {row["event_id"] for row in local_rows}
-    # Імпортовані події отримують локальний event_id, але causation_id — це
-    # вихідний event_id. Без цього повторний імпорт вважав би їх новими.
-    local_ids.update(
-        row["causation_id"] for row in local_rows if row["causation_id"]
-    )
+    local_ids = {_origin_id(row) for row in local_rows}
+    seen_in_bundle: set[str] = set()
     by_aggregate: dict[str, list[dict]] = {}
     for row in local_rows:
         key = row["aggregate_id"] or ""
@@ -102,9 +107,11 @@ def inspect(store, bundle: dict) -> dict:
     conflicts: list[dict] = []
     incoming: list[dict] = []
     for event in events:
-        if event.get("event_id") in local_ids:
+        origin = _origin_id(event)
+        if origin in local_ids or origin in seen_in_bundle:
             duplicates.append(event["event_id"])
             continue
+        seen_in_bundle.add(origin)
         payload = event.get("payload") or {}
         aggregate = event.get("aggregate_id") or ""
         touched = sorted(PROTECTED.intersection(payload.keys()))
@@ -171,7 +178,7 @@ def import_bundle(store, bundle: dict, actor: dict, *, apply: bool = False) -> d
             stored = store.append(
                 con, event["event_type"], event.get("aggregate_id"),
                 event.get("payload") or {}, actor, key,
-                causation_id=eid,
+                causation_id=_origin_id(event),
             )
             if not stored["replayed"]:
                 applied += 1

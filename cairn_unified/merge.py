@@ -219,6 +219,13 @@ def merge_bundle(store, bundle: dict, *, repo_path: str | Path,
     if report["status"] == "refused":
         raise CairnError("merge_refused", "bundle не належить цьому репозиторію або пошкоджений",
                          exit_code=4, details={"problems": report["problems"]})
+    blocking = [item for item in report["conflicts"]
+                if item.get("kind") in {"protected_field_divergence",
+                                        "journal_seq_divergence",
+                                        "context_object_divergence"}]
+    if blocking:
+        raise CairnError("merge_conflict", "злиття потребує розв'язання конфліктів",
+                         exit_code=4, details={"conflicts": blocking})
 
     fed = bundle.get("cairn_bundle") or {}
     by_id = {e.get("event_id"): e for e in fed.get("events") or []}
@@ -240,7 +247,8 @@ def merge_bundle(store, bundle: dict, *, repo_path: str | Path,
             stored = store.append(
                 con, event.get("event_type"), event.get("aggregate_id"),
                 event.get("payload") or {}, actor,
-                f"fed:{fed.get('digest', 'unknown')}:{eid}", causation_id=eid)
+                f"fed:{fed.get('digest', 'unknown')}:{eid}",
+                causation_id=federation._origin_id(event))
             if not stored.get("replayed"):
                 applied_events += 1
         for rel, payload in (bundle.get("context_objects") or {}).items():

@@ -107,6 +107,21 @@ def main() -> int:
         checks.append((" повторне злиття ідемпотентне",
                        merge.merge_bundle(dst, bundle, repo_path=repo,
                                           actor=HUMAN, apply=True)["applied_events"] == 0))
+        semantic.put_object(src, object_type="decision", title="remote conflict",
+                            summary="remote", actor=HUMAN,
+                            stable_key="merge-protected-conflict")
+        semantic.put_object(dst, object_type="decision", title="local conflict",
+                            summary="local", actor=AGENT_B,
+                            stable_key="merge-protected-conflict")
+        conflicting = zones.export_bundle(src, ["shared.loc"])
+        try:
+            merge.merge_bundle(dst, conflicting, repo_path=repo,
+                               actor=HUMAN, apply=True)
+            conflict_blocked = False
+        except Exception as exc:
+            conflict_blocked = getattr(exc, "code", "") == "merge_conflict"
+        checks.append((" захищена розбіжність блокує застосування",
+                       conflict_blocked))
 
         body = semantic.put_object(
             dst, object_type="decision", title="merge context",
