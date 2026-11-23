@@ -65,12 +65,14 @@ def main() -> int:
         (repo / "unrelated.txt").write_text("other work\n", encoding="utf-8")
         git(repo, "add", "unrelated.txt")
         git(repo, "commit", "-qm", "unrelated commit before noted file")
+        unrelated = git(repo, "rev-parse", "HEAD")
         git(repo, "add", PY_FILE)
         git(repo, "commit", "-qm", "keep full history")
         committed = git(repo, "rev-parse", "HEAD")
         index_git(base / "store", repo)
         result = change_notes.sync(store, repo)
         assert result["linked"] == 1 and result["pending"] == 0
+        assert unrelated not in change_notes.linked(store, identity["id"], PY_FILE)
         assert change_notes.status(store, repo, note_id)["notes"][0]["status"] == "linked"
         assert change_notes.status(store, repo, note_id)["notes"][0]["status_at_capture"] == "pending_commit"
         status_cli = subprocess.run([
