@@ -122,11 +122,16 @@ Use these names in the commands below:
    ```
 
    Record the note **after the edit and before the commit**. A later edit
-   to the same file needs a new note. Multiple reasons for one exact file
-   state remain ambiguous rather than being assigned at random.
+   to the same file needs a new note. The commit must transition from the
+   file state at the note's base HEAD to the captured state; a later revert
+   to the same text does not inherit that reason. Multiple reasons for
+   one exact file state remain ambiguous.
 
    `why node` shows confirmed history; `--include-pending --full`
    separately exposes all candidates without a proven commit link.
+   `change status --repo-path <REPO>` reports the current state per path.
+   `unlinked` means no recorded link; a commit may already exist if sync
+   has not run since that commit.
 
 3. **Check what was proved.** A Git-only commit still changed the file, but
    no agent edit has been tied to it. Do not invent a missing session or

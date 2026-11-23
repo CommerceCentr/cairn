@@ -37,6 +37,11 @@ def _blob_at_worktree(repo: Path, path: str) -> str:
     return result.stdout.decode("ascii").strip()
 
 
+def _blob_at_commit(repo: Path, commit: str, path: str) -> str | None:
+    result = _run(repo, "rev-parse", f"{commit}:{path}")
+    return result.stdout.decode("ascii", "replace").strip() if result.returncode == 0 else None
+
+
 def note(store, repo_path: str | Path, paths: list[str], why: str, intent: str,
          actor: dict, session_id: str = "") -> dict:
     """Record one explanation for a changed file set; no commit claim yet."""
@@ -51,27 +56,61 @@ def note(store, repo_path: str | Path, paths: list[str], why: str, intent: str,
         raise CairnError("change_note_too_large", "запис причини завеликий", exit_code=2)
     snapshots = []
     for path in sorted({_path(repo, item) for item in paths}):
-        status = _run(repo, "status", "--porcelain", "--untracked-files=all", "--", path)
-        if status.returncode or not status.stdout.strip():
+        git_status = _run(repo, "status", "--porcelain", "--untracked-files=all", "--", path)
+        if git_status.returncode or not git_status.stdout.strip():
             raise CairnError("file_not_changed", f"немає незакоміченої правки: {path}", exit_code=2)
         snapshots.append({"path": path, "blob": _blob_at_worktree(repo, path)})
     base = git.head(repo)
     claim = {"repo_id": repo_id, "base_commit": base, "files": snapshots,
              "why": why, "intent": intent, "session_id": str(session_id or ""),
+             # Immutable capture-time field: renaming it changes note_id for
+             # an identical historical call and breaks idempotent replay.
              "source": "explicit_agent_or_human_note", "status": "pending_commit"}
     digest = hashlib.sha256(canonical({**claim, "actor": actor}).encode("utf-8")).hexdigest()
     claim["note_id"] = digest
     event = store.mutate(lambda con: store.append(
         con, "change.note", repo_id, claim, actor,
         idempotency_key=f"change-note:v1:{repo_id}:{digest}"))
-    return {"note_id": digest, "status": "pending_commit", "paths": [x["path"] for x in snapshots],
+    current = status(store, repo, digest)["notes"][0]["status"]
+    return {"note_id": digest, "status": current, "paths": [x["path"] for x in snapshots],
             "event_id": event["event_id"], "replayed": event["replayed"]}
 
 
 def _notes(store, repo_id: str) -> list[dict]:
-    return [json.loads(row["payload_json"]) for row in store.read(
+    notes = [json.loads(row["payload_json"]) for row in store.read(
         "SELECT payload_json FROM events WHERE event_type = 'change.note' "
         "AND aggregate_id = ? ORDER BY seq", (repo_id,))]
+    links: dict[tuple[str, str], list[str]] = {}
+    for row in store.read(
+            "SELECT payload_json FROM events WHERE event_type = 'change.linked' "
+            "AND aggregate_id = ? ORDER BY seq", (repo_id,)):
+        link = json.loads(row["payload_json"])
+        links.setdefault((link["note_id"], link["path"]), []).append(link["commit"])
+    for item in notes:
+        item["status_at_capture"] = item.pop("status", "pending_commit")
+        item["file_status"] = {
+            file["path"]: {"status": "linked" if links.get((item["note_id"], file["path"]))
+                           else "unlinked",
+                           "commits": links.get((item["note_id"], file["path"]), [])}
+            for file in item["files"]}
+        linked_count = sum(x["status"] == "linked" for x in item["file_status"].values())
+        item["status"] = ("linked" if linked_count == len(item["files"])
+                          else "partially_linked" if linked_count else "unlinked")
+    return notes
+
+
+def status(store, repo_path: str | Path, note_id: str = "") -> dict:
+    """Current derived status; immutable note payload records capture time."""
+    repo_id = git.identity(Path(repo_path).resolve())["id"]
+    notes = _notes(store, repo_id)
+    if note_id:
+        notes = [item for item in notes if item["note_id"] == note_id]
+        if not notes:
+            raise CairnError("note_not_found", "нотатки немає в цьому репозиторії", exit_code=1)
+    return {"notes": [{key: item[key] for key in
+                      ("note_id", "status_at_capture", "status", "file_status",
+                       "base_commit", "why", "intent")}
+                      for item in notes]}
 
 
 def linked(store, repo_id: str, path: str) -> dict[str, list[dict]]:
@@ -114,6 +153,14 @@ def sync(store, repo_path: str | Path) -> dict:
     linked_count = 0
     ambiguous = 0
     ancestry: dict[tuple[str, str], bool] = {}
+    commit_blobs: dict[tuple[str, str], str | None] = {}
+
+    def blob_at(commit: str, path: str) -> str | None:
+        key = (commit, path)
+        if key not in commit_blobs:
+            commit_blobs[key] = _blob_at_commit(repo, commit, path)
+        return commit_blobs[key]
+
     for path, candidates in by_path.items():
         # --all includes refs/stash: a stash must never trigger promotion.
         commits = _run(repo, "log", "HEAD", "--branches", "--tags",
@@ -123,13 +170,19 @@ def sync(store, repo_path: str | Path) -> dict:
         matches_by_commit: dict[str, tuple[str, dict[str, dict]]] = {}
         commits_by_note: dict[str, set[str]] = {}
         for sha in commits.stdout.decode("ascii", "replace").splitlines():
-            blob = _run(repo, "rev-parse", f"{sha}:{path}")
-            if blob.returncode:
+            blob_id = blob_at(sha, path)
+            if blob_id is None:
                 continue
-            blob_id = blob.stdout.decode("ascii", "replace").strip()
             matches = []
             for item in candidates:
                 if item["blob"] != blob_id:
+                    continue
+                # The commit must perform the noted transition from the
+                # base file state. A later revert to the same blob is not
+                # evidence for the earlier note's motive.
+                base_blob = blob_at(item["base_commit"], path)
+                parent_blob = blob_at(f"{sha}^", path)
+                if base_blob != parent_blob or base_blob == blob_id:
                     continue
                 pair = (item["base_commit"], sha)
                 if pair not in ancestry:
@@ -169,5 +222,8 @@ def sync(store, repo_path: str | Path) -> dict:
                 idempotency_key=f"change-linked:v1:{repo_id}:{item['note_id']}:{sha}:{path}"))
             linked_count += int(not result["replayed"])
             existing.add(key)
+    current = _notes(store, repo_id)
     return {"notes": len(notes), "linked": linked_count, "ambiguous": ambiguous,
-            "pending": sum(1 for item in notes if not any(x[0] == item["note_id"] for x in existing))}
+            "pending": sum(item["status"] == "unlinked" for item in current),
+            "pending_meaning": "no change.linked event; a commit may already exist before sync",
+            "partially_linked": sum(item["status"] == "partially_linked" for item in current)}

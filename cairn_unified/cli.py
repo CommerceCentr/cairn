@@ -70,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
     note.add_argument("--session-id", default="")
     trigger = c.add_parser("sync", help="зв'язати записи причин із Git-комітами")
     trigger.add_argument("--repo-path", required=True)
+    state = c.add_parser("status", help="поточний стан нотаток і кожного шляху")
+    state.add_argument("--repo-path", required=True)
+    state.add_argument("--note-id", default="")
 
     g, c = group("code")
     ci = c.add_parser("index"); ci.add_argument("repo_id")
@@ -255,6 +258,8 @@ def dispatch(args, actor: dict):
         if cmd == "note":
             return change_notes.note(store, args.repo_path, args.path, args.why,
                                      args.intent, actor, args.session_id)
+        if cmd == "status":
+            return change_notes.status(store, args.repo_path, args.note_id)
         return change_notes.sync(store, args.repo_path)
 
     if group == "code":

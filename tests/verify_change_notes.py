@@ -42,6 +42,7 @@ def main() -> int:
             "why": "remove an artificial limit", "intent": "retain full node history",
             "session_id": "fixture-session"}, ACTOR)
         note_id = response["data"]["note_id"]
+        assert change_notes.status(store, repo, note_id)["notes"][0]["status"] == "unlinked"
         cli = subprocess.run([
             sys.executable, "-m", "cairn_unified", "--root", str(base / "store"),
             "--actor", "agent:fixture-agent", "change", "note",
@@ -61,12 +62,23 @@ def main() -> int:
         git(repo, "stash", "push", "-q", "--", PY_FILE)
         assert change_notes.sync(store, repo)["linked"] == 0
         git(repo, "stash", "pop", "-q")
+        (repo / "unrelated.txt").write_text("other work\n", encoding="utf-8")
+        git(repo, "add", "unrelated.txt")
+        git(repo, "commit", "-qm", "unrelated commit before noted file")
         git(repo, "add", PY_FILE)
         git(repo, "commit", "-qm", "keep full history")
         committed = git(repo, "rev-parse", "HEAD")
         index_git(base / "store", repo)
         result = change_notes.sync(store, repo)
         assert result["linked"] == 1 and result["pending"] == 0
+        assert change_notes.status(store, repo, note_id)["notes"][0]["status"] == "linked"
+        assert change_notes.status(store, repo, note_id)["notes"][0]["status_at_capture"] == "pending_commit"
+        status_cli = subprocess.run([
+            sys.executable, "-m", "cairn_unified", "--root", str(base / "store"),
+            "change", "status", "--repo-path", str(repo), "--note-id", note_id,
+        ], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+        assert status_cli.returncode == 0
+        assert json.loads(status_cli.stdout)["notes"][0]["status"] == "linked"
         assert change_notes.sync(portable, repo)["linked"] == 1
         assert change_notes.linked(portable, identity["id"], PY_FILE)[committed][0]["why"] == "remove an artificial limit"
         assert change_notes.sync(store, repo)["linked"] == 0
@@ -84,6 +96,7 @@ def main() -> int:
                                       ACTOR, "fixture-session")
         git(repo, "restore", "--", PY_FILE)
         assert change_notes.sync(store, repo)["pending"] == 1
+        assert change_notes.status(store, repo, discarded["note_id"])["notes"][0]["status"] == "unlinked"
         assert not any(discarded["note_id"] == item["note_id"]
                        for reasons in change_notes.linked(store, identity["id"], PY_FILE).values()
                        for item in reasons)
@@ -102,8 +115,25 @@ def main() -> int:
                       for item in reasons}
         assert first_claim["note_id"] not in linked_ids
         assert second_claim["note_id"] not in linked_ids
+
+        # The note describes a transition from value 5 to value 6. A later
+        # commit returning to value 6 from value 7 has a different cause.
+        (repo / PY_FILE).write_text("value = 6\n", encoding="utf-8")
+        earlier_reason = change_notes.note(store, repo, [PY_FILE],
+                                           "move from five to six", "use six", ACTOR)
+        (repo / PY_FILE).write_text("value = 7\n", encoding="utf-8")
+        git(repo, "add", PY_FILE)
+        git(repo, "commit", "-qm", "intervening change to seven")
+        (repo / PY_FILE).write_text("value = 6\n", encoding="utf-8")
+        git(repo, "add", PY_FILE)
+        git(repo, "commit", "-qm", "return to six for another reason")
+        assert change_notes.sync(store, repo)["linked"] == 0
+        linked_ids = {item["note_id"] for reasons in
+                      change_notes.linked(store, identity["id"], PY_FILE).values()
+                      for item in reasons}
+        assert earlier_reason["note_id"] not in linked_ids
         assert store.doctor()["ok"]
-    print("PASS: note, portable restore, stash, late commit, replay, why, discard, ambiguity")
+    print("PASS: note, portable restore, stash, late commit, replay, why, discard, ambiguity, revert")
     return 0
 
 
