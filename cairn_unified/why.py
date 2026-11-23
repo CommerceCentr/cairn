@@ -674,7 +674,7 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
                 lines.append("        намір зафіксувати цей стан: "
                              + str(item["checkpoint_context"].get("intent") or ""))
             for reason in item.get("change_reasons") or []:
-                lines.append("        ЧОМУ (запис учасника правки; файл підтверджено комітом): "
+                lines.append("        ЧОМУ (заява учасника; стан файла підтверджено комітом): "
                              + " ".join(reason["why"].split())[:400])
                 lines.append("        НАМІР: " + " ".join(reason["intent"].split())[:300])
             for intent in item["session_intents"][:3]:
@@ -1066,8 +1066,9 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
             "committed_node_changes": len([x for x in all_detail
                                             if change_key(x) in linked_events]),
             "node_attested_causes": len([x for x in all_detail
-                                         if x.get("semantic_cause_status") == "node_attested"])
-                                     + sum(len(item.get("change_reasons") or []) for item in history),
+                                         if x.get("semantic_cause_status") == "node_attested"]),
+            "file_state_attested_reasons": sum(
+                len(item.get("change_reasons") or []) for item in history),
             "unlinked_node_changes": unlinked_changes,
             "user_intents": len(intents),
             "motives_same_event": len([x for x in detail

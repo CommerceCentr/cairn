@@ -89,7 +89,8 @@ def linked(store, repo_id: str, path: str) -> dict[str, list[dict]]:
             out.setdefault(link["commit"], []).append({
                 "note_id": link["note_id"], "why": source["why"],
                 "intent": source["intent"], "session_id": source.get("session_id") or "",
-                "status": "node_attested", "basis": "exact_git_blob_after_edit",
+                "status": "file_state_attested", "scope": "file",
+                "basis": "exact_git_blob_after_edit",
                 "source_event_id": link.get("note_event_id"),
             })
     return out

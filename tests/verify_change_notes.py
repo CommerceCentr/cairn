@@ -72,9 +72,11 @@ def main() -> int:
         assert change_notes.sync(store, repo)["linked"] == 0
         answer = why.answer(store, repo_id=identity["id"], path=PY_FILE,
                             commit=committed, repo_path=str(repo), compact=True)
-        assert answer["coverage"]["node_attested_causes"] == 1
+        assert answer["coverage"]["node_attested_causes"] == 0
+        assert answer["coverage"]["file_state_attested_reasons"] == 1
         assert "remove an artificial limit" in answer["answer"]
         assert answer["commit_history"][0]["change_reasons"][0]["intent"] == "retain full node history"
+        assert answer["commit_history"][0]["change_reasons"][0]["scope"] == "file"
 
         (repo / PY_FILE).write_text("value = 4\n", encoding="utf-8")
         discarded = change_notes.note(store, repo, [PY_FILE],
