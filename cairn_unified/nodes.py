@@ -257,6 +257,16 @@ def discover_commit(repo_path: str, repo_id: str, revision: str = "HEAD") -> lis
                 symbols.extend(_symbols_from_data(rel, stream.read(), repo_id))
     finally:
         if proc.stdout:
+            # Залишок ЗЛИВАЄМО, а не обриваємо. `tarfile` припиняє читати на
+            # маркері кінця архіву, і закриття каналу раніше, ніж `git
+            # archive` допише, давало SIGPIPE: виміряно rc = 141 (128+13) з
+            # ПОРОЖНІМ stderr, тобто падіння без причини. Глушити код виходу
+            # було б гірше — тоді справжній збій git став би невидимим.
+            try:
+                while proc.stdout.read(1 << 16):
+                    pass
+            except (OSError, ValueError):
+                pass
             proc.stdout.close()
         stderr = proc.stderr.read() if proc.stderr else b""
         result = proc.wait()
