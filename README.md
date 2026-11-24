@@ -127,6 +127,13 @@ Use these names in the commands below:
    to the same text does not inherit that reason. Multiple reasons for
    one exact file state remain ambiguous.
 
+   For a Codex `FileChange`, use `change codex-events --repo-path <REPO>
+   --path <relative/path>` to read its `session_id` and `event_id`. Add
+   `--session-id <ID> --codex-event-id <EVENT_ID>` to a single-file
+   `change note`. Cairn treats this as a node-level *agent statement* only
+   when the same session's edit has a unique Git content witness in that
+   commit. Without that event reference, the note remains file-scoped.
+
    `why node` shows confirmed history; `--include-pending --full`
    separately exposes all candidates without a proven commit link.
    `change status --repo-path <REPO>` reports the current state per path.

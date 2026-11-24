@@ -51,12 +51,27 @@ CAPABILITIES: dict[str, dict[str, str]] = {
         # обмежує модель довіри, а не мовчазне викидання.
         "reasoning": "supported:agent_prose",
         "mutation": "partial:write_edit_only",
+        # Виміряно 2026-11-24 на журналі 2e7f1040 (16,3 МБ, 2 356 записів
+        # `user`/`assistant`, 777 блоків `tool_use`): записів, де проза
+        # агента й правка лежать в ОДНОМУ записі, — **0**; правок без прози
+        # в тому ж записі — 108. Проза приходить окремими записами
+        # `assistant`, тому мотив цього джерела можна привʼязати лише за
+        # порядком, а не до тієї самої події редагування.
+        #
+        # Відсутнє поле назване прямо: у блоці `tool_use` немає посилання
+        # на текстовий блок (і навпаки), тож `node_attested` з цього
+        # джерела не виводиться. Підвищувати `prior_by_seq` до доведеного
+        # заборонено мандатом §7.2.
+        "motive_binding": "unsupported:prose_in_separate_record",
     },
     SOURCE_CODEX: {
         "user_intent": "supported",
         "compaction": "partial:plaintext_or_encrypted_metadata",
         "reasoning": "unsupported:encrypted_content",
         "mutation": "partial:completed_file_change",
+        # Проза Codex зашифрована, тож мотиву немає взагалі — не «є, але
+        # в іншому записі». Дві різні причини, дві різні мітки.
+        "motive_binding": "unsupported:encrypted_content",
     },
 }
 
@@ -86,6 +101,7 @@ def capabilities(source_kind: str) -> dict[str, str]:
     return CAPABILITIES.get(canonical_source(source_kind)) or {
         "user_intent": "unknown", "compaction": "unknown",
         "reasoning": "unknown", "mutation": "unknown",
+        "motive_binding": "unknown",
     }
 
 

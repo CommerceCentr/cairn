@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 from pathlib import Path
+
+from ..errors import CairnError
 
 NAME = "codex"
 SOURCE_KIND = "codex_rollout"
@@ -251,3 +254,39 @@ def read(path: str | Path, offset: int = 0):
                    "abs_paths": [], "session_id": sid, "cwd": cwd,
                    "event_id": str(payload.get("id") or f"{sid}:msg:{event_position}"),
                    "ordinal": event_position, "text": text}
+
+
+def recent_edits(repo_path: str | Path, path: str = "", limit: int = 20) -> list[dict]:
+    """Read-only project-scoped Codex FileChange references for `change note`.
+
+    Return ids and patch hashes, never full journal prose. The event id is
+    the explicit reference an agent may attach to a post-edit reason.
+    """
+    repo = Path(repo_path).resolve()
+    if not repo.is_dir() or not 1 <= limit <= 100:
+        raise CairnError("bad_codex_events_query",
+                         "потрібен наявний репозиторій і limit 1..100", exit_code=2)
+    wanted = (repo / path).resolve() if path else None
+    if wanted and not wanted.is_relative_to(repo):
+        raise CairnError("bad_codex_events_query",
+                         "шлях має бути всередині репозиторію", exit_code=2)
+    result: list[dict] = []
+    for journal in discover()[:100]:
+        for event in read(journal):
+            if event.get("kind") != "tool_call":
+                continue
+            for absolute, operation, patch in zip(
+                    event.get("abs_paths") or [], event.get("operations") or [],
+                    event.get("patches") or []):
+                target = Path(absolute).resolve()
+                if not target.is_relative_to(repo) or (wanted and target != wanted):
+                    continue
+                result.append({
+                    "session_id": event["session_id"], "event_id": event["event_id"],
+                    "ts": event.get("ts"), "path": target.relative_to(repo).as_posix(),
+                    "operation": operation,
+                    "patch_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest()
+                    if patch else "",
+                })
+    result.sort(key=lambda item: (item["ts"] or "", item["event_id"]), reverse=True)
+    return result[:limit]

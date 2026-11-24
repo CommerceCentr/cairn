@@ -688,7 +688,10 @@ def _answer_text(node: dict, groups: dict, intents: list[dict],
                 lines.append("        намір зафіксувати цей стан: "
                              + str(item["checkpoint_context"].get("intent") or ""))
             for reason in item.get("change_reasons") or []:
-                lines.append("        ЧОМУ (заява учасника; стан файла підтверджено комітом): "
+                label = ("подія вузла підтверджена Git" if
+                         reason.get("status") == "node_attested" else
+                         "стан файла підтверджено комітом")
+                lines.append(f"        ЧОМУ (заява учасника; {label}): "
                              + " ".join(reason["why"].split())[:400])
                 lines.append("        НАМІР: " + " ".join(reason["intent"].split())[:300])
             for intent in item["session_intents"][:3]:
@@ -982,6 +985,26 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
     witnessed_events = {change_key(event) for item in history
                         for event in item["mutations_for_node"]
                         if event.get("evidence_level") == "content_transition"}
+    # A Codex FileChange has an explicit event id but often no plaintext
+    # reasoning. A post-edit note may name that id. Attribute it only when
+    # the same session's event has a content witness in the same commit.
+    explicit_notes: dict[tuple, list[dict]] = {}
+    for commit_item in history:
+        for event in commit_item["mutations_for_node"]:
+            if event.get("evidence_level") != "content_transition":
+                continue
+            source_kind, session_id = session_identity(
+                str(event.get("session_object_id") or ""))
+            if source_kind != "codex":
+                continue
+            for reason in commit_item.get("change_reasons") or []:
+                if (reason.get("mutation_source_kind") == "codex"
+                        and reason.get("mutation_event_id") == event.get("event_id")
+                        and reason.get("session_id") == session_id
+                        and reason.get("basis") == "exact_git_blob_after_edit"):
+                    explicit_notes.setdefault(change_key(event), []).append(reason)
+    explicit_notes = {key: values for key, values in explicit_notes.items()
+                      if len(values) == 1}
     all_detail = [item for key in sorted(query_keys)
                   for item in _node_chain(store, key)]
     unique_detail: dict[tuple, dict] = {}
@@ -998,10 +1021,22 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         item["node_changes"] = [change for change in all_detail
                                 if change_key(change) in event_ids]
     for change in all_detail:
+        matched = explicit_notes.get(change_key(change))
+        if matched and not change.get("motive"):
+            reason = matched[0]
+            change["motive"] = reason["why"]
+            change["motive_source"] = "explicit_codex_change_note"
+            change["intent"] = reason["intent"]
+            change["note"] = ("мотив — заява агента; точну подію і стан файла "
+                              "підтверджено Git")
+            change["source_event_id"] = reason.get("source_event_id")
+            reason["status"] = "node_attested"
+            reason["scope"] = "node"
         change["semantic_cause_status"] = (
             "node_attested" if change_key(change) in witnessed_events
             and change.get("motive")
-            and change.get("motive_source") == "agent_reasoning_same_event"
+            and change.get("motive_source") in
+            {"agent_reasoning_same_event", "explicit_codex_change_note"}
             else "agent_proposed" if change.get("motive") else "not_established")
     detail = (all_detail if include_pending else
               [item for item in all_detail if change_key(item) in linked_events])
@@ -1085,7 +1120,8 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
             "node_attested_causes": len([x for x in all_detail
                                          if x.get("semantic_cause_status") == "node_attested"]),
             "file_state_attested_reasons": sum(
-                len(item.get("change_reasons") or []) for item in history),
+                sum(reason.get("scope") == "file" for reason in
+                    item.get("change_reasons") or []) for item in history),
             "unlinked_node_changes": unlinked_changes,
             "user_intents": len(intents),
             "motives_same_event": len([x for x in detail

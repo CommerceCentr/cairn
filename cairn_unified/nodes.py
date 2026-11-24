@@ -238,11 +238,37 @@ def _symbols_from_data(rel: str, data: bytes, repo_id: str) -> list[dict]:
     return symbols
 
 
+def archive_failure(returncode: int, stderr: bytes) -> dict:
+    """Збій `git archive` -> деталі, за якими його МОЖНА діагностувати.
+
+    Виміряний дефект: 2026-11-24 хук `post-commit` упав із
+    `git_failed {"stderr": ""}`. Код виходу не записувався, тому причина
+    падіння була невідновна — і саме це зробило збій невідтворюваним.
+    Порожній `stderr` сам по собі не є відповіддю: у діапазоні сигналів
+    (понад 128 на POSIX-угоді, яку Git тримає й на Windows) процес гине
+    без повідомлення, і єдиний носій причини — номер сигналу.
+    """
+    text = stderr.decode("utf-8", "replace")[:400]
+    details: dict = {"returncode": int(returncode), "stderr": text}
+    if not text.strip():
+        details["stderr_empty"] = True
+        if returncode > 128:
+            details["signal"] = int(returncode) - 128
+            # 13 = SIGPIPE: читач закрив канал раніше, ніж Git допише.
+            details["likely_cause"] = ("broken_pipe_reader_closed_early"
+                                       if returncode - 128 == 13
+                                       else "killed_by_signal")
+        else:
+            details["likely_cause"] = "not_established"
+    return details
+
+
 def discover_commit(repo_path: str, repo_id: str, revision: str = "HEAD") -> list[dict]:
     """Index committed bytes, excluding uncommitted worktree changes."""
     proc = subprocess.Popen(["git", "-C", repo_path, "archive", "--format=tar", revision],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     symbols: list[dict] = []
+    read_error: Exception | None = None
     try:
         with tarfile.open(fileobj=proc.stdout, mode="r|") as archive:
             for member in archive:
@@ -255,13 +281,22 @@ def discover_commit(repo_path: str, repo_id: str, revision: str = "HEAD") -> lis
                 if stream is None:
                     continue
                 symbols.extend(_symbols_from_data(rel, stream.read(), repo_id))
+    except tarfile.TarError as exc:
+        # Коли `git archive` відмовляє, потік ПОРОЖНІЙ, і `tarfile` падає
+        # першим — виміряно `ReadError("empty file")` на невідомій ревізії.
+        # Тоді причина збою Git так і не показувалась. Класифікуємо нижче,
+        # коли вже відомий код виходу: порожній архів при живому Git і
+        # відмова Git — це дві РІЗНІ причини, не одна.
+        read_error = exc
     finally:
         if proc.stdout:
             # Залишок ЗЛИВАЄМО, а не обриваємо. `tarfile` припиняє читати на
             # маркері кінця архіву, і закриття каналу раніше, ніж `git
-            # archive` допише, давало SIGPIPE: виміряно rc = 141 (128+13) з
-            # ПОРОЖНІМ stderr, тобто падіння без причини. Глушити код виходу
-            # було б гірше — тоді справжній збій git став би невидимим.
+            # archive` допише, дало б SIGPIPE: виміряно, що часткове читання
+            # цього ж архіву дає rc 141 (128+13) з ПОРОЖНІМ stderr. Це
+            # укріплення за побудовою, а НЕ доведена причина збою, який
+            # хук показав 2026-11-24: відтворити той збій не вдалося, див.
+            # `archive_failure` нижче й ворота `verify_archive_failure.py`.
             try:
                 while proc.stdout.read(1 << 16):
                     pass
@@ -271,8 +306,20 @@ def discover_commit(repo_path: str, repo_id: str, revision: str = "HEAD") -> lis
         stderr = proc.stderr.read() if proc.stderr else b""
         result = proc.wait()
     if result:
-        raise CairnError("git_failed", "git archive failed",
-                         details={"stderr": stderr.decode("utf-8", "replace")[:400]})
+        details = archive_failure(result, stderr)
+        details["revision"] = str(revision)
+        if read_error is not None:
+            details["stream"] = type(read_error).__name__
+        raise CairnError("git_failed", "git archive failed", details=details)
+    if read_error is not None:
+        # Git завершився успішно, а потік усе одно не читається — це НЕ
+        # збій Git, і називати це `git_failed` було б склеюванням двох
+        # причин під однією міткою.
+        raise CairnError("archive_unreadable", "git archive stream unreadable",
+                         details={"revision": str(revision),
+                                  "stream": type(read_error).__name__,
+                                  "error": str(read_error)[:200],
+                                  "returncode": int(result)})
     symbols.sort(key=lambda item: item["stable_key"])
     return symbols
 

@@ -59,6 +59,19 @@ def main() -> int:
     assert events[-2]["reason"] == "encrypted_compaction"
     assert events[-1]["evidence_scope"] == "file"
     assert events[-1]["patch"] == "@@ -1 +1 @@\n-old\n+new\n"
+    original_discover = codex.discover
+    original_lines = codex._lines
+    codex.discover = lambda: ["rollout-fixture.jsonl"]
+    codex._lines = lambda _path: iter(json.dumps(row) for row in rows)
+    try:
+        recent = codex.recent_edits(FIXTURE_REPO, "a.py")
+    finally:
+        codex.discover = original_discover
+        codex._lines = original_lines
+    assert len(recent) == 1
+    assert recent[0]["session_id"] == "test-session"
+    assert recent[0]["event_id"] == "edit-1"
+    assert recent[0]["path"] == "a.py"
     assert normalize.capabilities(normalize.SOURCE_CODEX)["mutation"].startswith(
         "partial")
     print("ВЕРДИКТ: Codex IDs, user intent, compactions and shell boundary pass")

@@ -32,6 +32,7 @@ TOOLS = [
          "repo_path": {"type": "string"}, "paths": {"type": "array", "items": {"type": "string"}},
          "why": {"type": "string"}, "intent": {"type": "string"},
          "session_id": {"type": "string"},
+         "codex_event_id": {"type": "string"},
      }, ["repo_path", "paths", "why", "intent"])},
     {"name": "cairn_context", "description": "Зібрати обмежений контекст для задачі.",
      "inputSchema": _schema({
@@ -160,7 +161,8 @@ def call_tool(store, name: str, arguments: dict | None, actor: dict | None = Non
     if name == "cairn_change_note":
         result = change_notes.note(store, args["repo_path"], args["paths"],
                                    args["why"], args["intent"], actor,
-                                   args.get("session_id", ""))
+                                   args.get("session_id", ""),
+                                   args.get("codex_event_id", ""))
         return _result(store, result, trust="agent_proposed",
                        refs=[result["note_id"]],
                        note="кандидат; зв'язок із комітом ще не доведено")

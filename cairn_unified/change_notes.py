@@ -43,7 +43,7 @@ def _blob_at_commit(repo: Path, commit: str, path: str) -> str | None:
 
 
 def note(store, repo_path: str | Path, paths: list[str], why: str, intent: str,
-         actor: dict, session_id: str = "") -> dict:
+         actor: dict, session_id: str = "", codex_event_id: str = "") -> dict:
     """Record one explanation for a changed file set; no commit claim yet."""
     repo = Path(repo_path).resolve()
     repo_id = git.identity(repo)["id"]
@@ -54,18 +54,38 @@ def note(store, repo_path: str | Path, paths: list[str], why: str, intent: str,
         raise CairnError("missing_change_reason", "потрібні paths, why та intent", exit_code=2)
     if len(why) > 4000 or len(intent) > 4000 or len(paths) > 100:
         raise CairnError("change_note_too_large", "запис причини завеликий", exit_code=2)
+    codex_event_id = str(codex_event_id or "").strip()
+    if codex_event_id and (len(paths) != 1 or not session_id or len(codex_event_id) > 256):
+        raise CairnError("bad_codex_event_ref",
+                         "потрібні один шлях, session_id і коректний FileChange event_id",
+                         exit_code=2)
     snapshots = []
     for path in sorted({_path(repo, item) for item in paths}):
         git_status = _run(repo, "status", "--porcelain", "--untracked-files=all", "--", path)
         if git_status.returncode or not git_status.stdout.strip():
             raise CairnError("file_not_changed", f"немає незакоміченої правки: {path}", exit_code=2)
         snapshots.append({"path": path, "blob": _blob_at_worktree(repo, path)})
+    if codex_event_id:
+        from .adapters import codex
+        matching = [event for event in codex.recent_edits(
+            repo, snapshots[0]["path"], limit=100)
+            if event["session_id"] == session_id
+            and event["event_id"] == codex_event_id]
+        if len(matching) != 1:
+            raise CairnError("codex_event_not_found",
+                             "завершену правку цієї сесії та файла в журналі не знайдено",
+                             exit_code=2)
     base = git.head(repo)
     claim = {"repo_id": repo_id, "base_commit": base, "files": snapshots,
              "why": why, "intent": intent, "session_id": str(session_id or ""),
              # Immutable capture-time field: renaming it changes note_id for
              # an identical historical call and breaks idempotent replay.
              "source": "explicit_agent_or_human_note", "status": "pending_commit"}
+    # Keep the v1 digest stable for all existing notes. An explicit Codex
+    # reference is a new claim, never inferred from time or a nearby message.
+    if codex_event_id:
+        claim["mutation_event_id"] = codex_event_id
+        claim["mutation_source_kind"] = "codex"
     digest = hashlib.sha256(canonical({**claim, "actor": actor}).encode("utf-8")).hexdigest()
     claim["note_id"] = digest
     event = store.mutate(lambda con: store.append(
@@ -109,7 +129,8 @@ def status(store, repo_path: str | Path, note_id: str = "") -> dict:
             raise CairnError("note_not_found", "нотатки немає в цьому репозиторії", exit_code=1)
     return {"notes": [{key: item[key] for key in
                       ("note_id", "status_at_capture", "status", "file_status",
-                       "base_commit", "why", "intent")}
+                       "base_commit", "why", "intent", "mutation_event_id",
+                       "mutation_source_kind") if key in item}
                       for item in notes]}
 
 
@@ -131,6 +152,8 @@ def linked(store, repo_id: str, path: str) -> dict[str, list[dict]]:
                 "status": "file_state_attested", "scope": "file",
                 "basis": "exact_git_blob_after_edit",
                 "source_event_id": link.get("note_event_id"),
+                "mutation_event_id": source.get("mutation_event_id") or "",
+                "mutation_source_kind": source.get("mutation_source_kind") or "",
             })
     return out
 

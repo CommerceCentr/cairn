@@ -68,11 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
     note.add_argument("--why", required=True)
     note.add_argument("--intent", required=True)
     note.add_argument("--session-id", default="")
+    note.add_argument("--codex-event-id", default="",
+                      help="event_id завершеного Codex FileChange для цього одного файла")
     trigger = c.add_parser("sync", help="зв'язати записи причин із Git-комітами")
     trigger.add_argument("--repo-path", required=True)
     state = c.add_parser("status", help="поточний стан нотаток і кожного шляху")
     state.add_argument("--repo-path", required=True)
     state.add_argument("--note-id", default="")
+    codex_events = c.add_parser("codex-events", help="останні завершені FileChange в цьому репозиторії")
+    codex_events.add_argument("--repo-path", required=True)
+    codex_events.add_argument("--path", default="")
+    codex_events.add_argument("--limit", type=int, default=20)
 
     g, c = group("code")
     ci = c.add_parser("index"); ci.add_argument("repo_id")
@@ -255,9 +261,13 @@ def dispatch(args, actor: dict):
 
     if group == "change":
         from . import change_notes
+        if cmd == "codex-events":
+            from .adapters import codex
+            return {"events": codex.recent_edits(args.repo_path, args.path, args.limit)}
         if cmd == "note":
             return change_notes.note(store, args.repo_path, args.path, args.why,
-                                     args.intent, actor, args.session_id)
+                                     args.intent, actor, args.session_id,
+                                     args.codex_event_id)
         if cmd == "status":
             return change_notes.status(store, args.repo_path, args.note_id)
         return change_notes.sync(store, args.repo_path)
