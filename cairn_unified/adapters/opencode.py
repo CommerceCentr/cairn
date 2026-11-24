@@ -113,8 +113,31 @@ def read(db_path: str | None = None, session_id: str | None = None):
                 continue
             if typ != "assistant":
                 continue
+            content = data.get("content") or []
             reasoning = _reasoning_of(data)
-            for block in data.get("content") or []:
+            if not content:
+                # Поточні сесії зберігають частини в `session_part`, а поле
+                # `session_message.data.content` лишається порожнім. Без цього
+                # читання завершена правка з мотивом тієї самої події не
+                # потрапляє в індекс (виміряно на реальній події редагування).
+                content = []
+                texts = []
+                for ptype, call, praw in con.execute(
+                        "SELECT type, call_id, data FROM session_part "
+                        "WHERE message_id = ? AND session_id = ? ORDER BY ordinal",
+                        (mid, sid)):
+                    part = json.loads(praw)
+                    if ptype == "tool":
+                        part = dict(part)
+                        if not part.get("id"):
+                            part["id"] = call or ""
+                        content.append(part)
+                    elif ptype == "reasoning":
+                        text = " ".join(str(part.get("text") or "").split())
+                        if text:
+                            texts.append(text)
+                reasoning = "\n".join(texts)
+            for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool":
                     continue
                 name = str(block.get("name") or "")

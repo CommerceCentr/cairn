@@ -341,20 +341,32 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
     for ev, rel, resolved in ready:
         rationale = reasons_by_event.get(str(ev["event_id"]), "")
         rationale_source = "agent_reasoning_same_event" if rationale else "none"
+        near = None
         if not rationale:
             near = _prior_reasoning(ev, reasoning_items, reasoning_seqs)
             if near:
                 rationale = str(near.get("text") or "")
                 rationale_source = "agent_reasoning_prior_by_seq"
+        # §7.2: один компактний запис на завершену правку. Пояснення в тій самій
+        # події несе id мутації; сусіднє повідомлення зберігає свій id і ніколи
+        # не підвищується до same-event через близькість за seq.
+        explanation_event_id = str(
+            (near.get("event_id") if near else None) or ev.get("event_id") or "")
         intent = _prior_intent(ev, intents, intent_seqs)
         before = ev.get("old_string") or ""
         after = ev.get("new_string") or ""
         evidence = {
             "event_id": ev.get("event_id"), "tool": ev.get("tool"),
+            "action": ev.get("tool"),
+            "repo_id": repo_id,
+            "session_id": str(ev.get("session_id") or ""),
+            "mutation_event_id": str(ev.get("event_id") or ""),
+            "explanation_event_id": explanation_event_id,
             "evidence_scope": ev.get("evidence_scope") or "node",
-            "ts": ev.get("ts"), "path": rel,
+            "ts": ev.get("ts"), "source_ts": ev.get("ts"), "path": rel,
             "before_sha256": sha256_text(before) if before else "",
             "after_sha256": sha256_text(after) if after else "",
+            "rationale_sha256": sha256_text(rationale) if rationale else "",
             "rationale_source": rationale_source,
             # Корінь «чому» — слова користувача, не агента. Якщо наміру немає,
             # поле порожнє з явним маркером: не підставляємо reasoning замість
@@ -374,6 +386,7 @@ def link_mutations(store, *, events: list[dict], session_obj_id: str,
                     # This is a session edit candidate. Git content evidence
                     # promotes it later; stash/discard never enter node history.
                     "commit_state": "pending",
+                    "node_key": str(node["stable_key"]),
                     "evidence": evidence,
                     "rationale": rationale or "",
                     "intent_source": evidence["intent_source"],
