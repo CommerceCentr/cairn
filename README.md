@@ -1,66 +1,95 @@
 # Cairn
 
-> [Українською](README.uk.md) · [Agent mandate](MANDATE-AGENT-CAIRN-CAUSAL-HISTORY.md) · [Apache-2.0](LICENSE)
+> [Українською](README.uk.md) · [For agents](#for-agents) · [Support the project](#support-the-project) · [Apache-2.0](LICENSE)
 
-Cairn keeps the reasons behind code changes available across agents and
-devices. It connects Git commits, project nodes, completed agent edits, and
-available session context in a local `.cairn` store. Reading and searching
-files do not create causal events.
+### An agent changes the code. Cairn keeps the reason.
 
-## Measured in Cairn's development repository
+In a new session, another agent can see the code and commits, but may not
+know why an earlier change was made. The explanation may be in an old chat,
+a compacted session, or on another device. The team then spends time
+reconstructing the same decision, or repeats an old mistake.
 
-Snapshot: **2026-11-24**, HEAD `807b252`. **OpenCode, Claude Code, and Codex**
-measured this repository and contributed evidence from their sessions to the
-same store.
+**Cairn gathers the available evidence in one `.cairn` store.** It connects
+a project node, a completed agent edit, its stated reason, and a Git commit.
+Before editing, an agent can ask: *“How did this node change, and why?”*
 
-| Check | Current result |
+```text
+conversation and intent → node edit → Git commit
+          ↓                  ↓            ↓
+          └──────────── .cairn ──────────┘ → history for the next agent
+```
+
+Reading files, `grep`, and search do not create causal events. An
+uncommitted edit remains a candidate. A commit confirms an edit's
+participation only when its content transition can be matched uniquely in
+Git.
+
+## What the store contains today
+
+In Cairn's development repository, **OpenCode, Claude Code, and Codex**
+measured the history and contributed evidence from their sessions to the
+same store. This snapshot was taken on **24 November 2026** at commit
+`3159a6d`.
+
+| Measure | Result |
 |---|---:|
-| Git commits indexed | **39/39** |
-| Commits with confirmed session edits / Git context only | **22 / 17** |
+| Git commits in the store | **40/40** |
+| Commits with confirmed session edits | **22** |
+| Commits with Git context only | **18** |
 | Unique edits linked to commits | **184** |
-| Stored edit-to-commit links verified | **205/205**, 0 failures; 21 duplicate links |
-| Events in the store and verified private bundle | **1,831 / 1,831** |
-| Session records: Claude Code / Codex / OpenCode | **3 / 2 / 3** |
-| Full test suite | **37/37** passed |
+| Edit-to-commit links checked against Git | **205/205**, 0 failures |
+| Events in `.cairn` and the verified private bundle | **1,839/1,839** |
+| Full test suite | **37/37** |
 
-For the control file `cairn_unified/why.py`, Cairn records 78 edit candidates:
-16 have a Git witness, 2 have an attested event-level reason, 2 have a
-file-state reason, and 62 remain unlinked. Another node, `ontology.py`, has
-one attested event-level reason. These are **participant statements tied to
-verified edits**, not proof that a decision was correct or that the agent
-executed `git commit`. The 17 Git-only commits remain visible without an
-invented session or motive.
+For the control file `cairn_unified/why.py`, Cairn keeps 78 edit candidates.
+Sixteen have a Git witness, two have a reason tied to a specific node edit,
+and two have a reason for the file state. The other 62 have no unique commit
+link. Cairn shows both the explanations and **where evidence is missing**.
 
-## Agent workflow
+These are participants' explanations tied to verified edits. They do not
+prove that a decision was correct or identify who ran `git commit`. Cairn
+does not invent a motive for old commits whose agent journals are missing.
 
-1. Before editing, read the current code and ask `why node` for its history.
-   If `freshness.status` is `stale`, sync first.
-2. After a completed edit and before the commit, record a short `change note`
-   with `why` and `intent`. A Codex agent can obtain its completed
-   `FileChange` reference with `change codex-events` and attach `session_id`
-   and `event_id` to a single-file note. Other adapters use the evidence
-   their journals actually contain.
-3. After the commit, run the project causality sync. Only a unique Git content
-   transition promotes an edit into confirmed history. Stashed or discarded
-   edits remain candidates. Check `why node`, `change status`, `project doctor`,
-   and the Git witness verifier.
-4. Export the updated private bundle for another device. It carries the
-   recorded evidence, not links to local journal files. Keep it outside public
-   Git because it contains human and agent text.
+## For agents
+
+1. **Before editing**, read the current code and ask `why node` for its
+   history. If the store is stale, sync it first.
+2. **After an edit, before committing**, record a short `why` and `intent`
+   with `change note`. Codex can refer to its completed `FileChange` event;
+   other agents record only what their journals support.
+3. **After committing**, run the causality sync. Cairn links an edit to Git
+   through a unique content transition. A stash or discarded edit does not
+   become confirmed node history.
+4. **On another device**, carry the private event bundle and inspect it
+   before importing. It contains the evidence itself, not links to local
+   journal files.
 
 The [agent mandate](MANDATE-AGENT-CAIRN-CAUSAL-HISTORY.md) has the commands
 and evidence rules. [Agent onboarding](AGENT-ONBOARD.md) covers CLI and MCP.
+The core package needs Python and has no external runtime dependencies.
 
 ## Release boundary
 
-The current source tree has no machine-specific absolute paths. **26 older
-commits in the full Git history still contain them**, so the full `main`
-history is not cleared for public release. A clean source snapshot without
-`.git` or `.cairn` is available as the release route. Publishing a cleaned
-full history would also require migrating Cairn's Git identity and evidence.
-The private bundle is not part of the public source snapshot.
+The current source tree has no machine-specific absolute paths. Twenty-six
+older commits in the full Git history still do, so that history should not
+be published without cleanup and migration of Cairn's Git identity. A clean
+source snapshot without `.git` or `.cairn` is ready for publication. The
+private bundle, which contains human and agent text, is not included.
 
 ## License
 
-[Apache-2.0](LICENSE). Developed with the support of
-[CommerCentr](https://commercentr.com/en).
+**[Apache-2.0](LICENSE)** permits commercial use. Keep the license and
+`NOTICE` with the code.
+
+## Support the project
+
+If Cairn helps you and you would like to support its development:
+
+```text
+Network: TRON (TRC-20)
+Address: TZ5veYdk67o3dWNHHLRaBpdXw3fJHt3w5V
+```
+
+<img src="docs/donate-tron.png" alt="TRON QR code to support Cairn" width="180">
+
+Developed with the support of [CommerCentr](https://commercentr.com/en).
