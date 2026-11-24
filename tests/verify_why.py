@@ -161,6 +161,19 @@ def main() -> int:
     finally:
         shutil.rmtree(temp, ignore_errors=True)
 
+    # --- порядок хронології: найстаріший коміт попереду, навіть без topo_index ---
+    rows = [{"commit": "new", "committed_at": "2026-11-24T12:22:31+02:00", "topo_index": 33},
+            {"commit": "old", "committed_at": "2026-11-20T17:13:33+02:00"},
+            {"commit": "mid", "committed_at": "2026-11-22T15:40:55+02:00", "topo_index": 20}]
+    order = [row["commit"] for row in sorted(rows, key=why.history_order)]
+    checks.append(("хронологія за датою, не за topo_index",
+                   order == ["old", "mid", "new"], "->".join(order)))
+    # реверс: якби ключ знову ставив topo_index першим, порядок був би інший
+    naive = [row["commit"] for row in sorted(
+        rows, key=lambda r: (r.get("topo_index") is None, r.get("topo_index") or 0))]
+    checks.append(("реверс: старий ключ справді ламав порядок",
+                   naive != ["old", "mid", "new"], "->".join(naive)))
+
     good = 0
     for label, ok, detail in checks:
         print(f"  {'ok  ' if ok else 'FAIL'} {label:48} | {detail[:40]}")

@@ -49,6 +49,7 @@ SCRIPTS = (
     "verify_normalize.py",
     "verify_sources.py",
     "verify_surfaces.py",
+    "verify_auto_capture.py",
     # Переносність, зони без колізій, спільна картина — у воротах,
     # бо саме на це питання користувач мусить мати відповідь прогоном.
     "../tools/measure_teamwork.py",

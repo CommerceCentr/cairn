@@ -539,6 +539,20 @@ def _commit_history(store, facts: list[dict], bodies: dict[str, dict],
     return history
 
 
+def history_order(item: dict) -> tuple[str, int]:
+    """Порядок хронології: ЗМІСТ (дата коміту), не позиція в чужому зрізі.
+
+    `topo_index` приходить лише з архіву Git і є не в усіх елементів, тому
+    сортування за ним першим викидало в кінець коміти, яких в архівному
+    зрізі цього шляху немає. Виміряно на `cairn_unified/verification.py`:
+    коміт від 2026-11-20 стояв ПІСЛЯ коміта від 2026-11-24. Тепер
+    `topo_index` лишається тільки розвʼязувачем нічиїх.
+    """
+    topo = item.get("topo_index")
+    return (str(item.get("committed_at") or ""),
+            topo if isinstance(topo, int) else 1 << 30)
+
+
 def _archive_commit_history(store, repo_id: str, path: str) -> list[dict]:
     """Git facts recorded as one portable event per commit."""
     out = []
@@ -885,9 +899,12 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
         else:
             history.append(item)
             by_commit[item["commit"]] = item
-    history.sort(key=lambda item: (item.get("topo_index") is None,
-                                   item.get("topo_index") if item.get("topo_index") is not None
-                                   else item.get("committed_at") or ""))
+    # Якір — дата коміту, бо вона є в УСІХ елементів. `topo_index` лишається
+    # лише розвʼязувачем нічиїх: він приходить тільки з архіву Git, і
+    # сортування за ним першим викидало в кінець коміти, яких у архівному
+    # зрізі цього шляху немає (виміряно: 8c1eea5 від 2026-11-20 стояв після
+    # 2026-11-24).
+    history.sort(key=history_order)
     from . import change_notes
     reasons_by_commit = change_notes.linked(store, repo_id, path.replace("\\", "/"))
     for item in history:

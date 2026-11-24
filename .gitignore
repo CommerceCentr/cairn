@@ -45,3 +45,10 @@ out/
 build/
 dist/
 *.egg-info/
+
+# Машинна конфігурація хуків: містить абсолютні шляхи цієї машини, тому
+# НЕ публікується (ворота tests/verify_public_paths.py це перевіряють).
+# Відтворюється командою: python tools/install_auto_capture.py --repo . --root .
+.claude/settings.json
+.cairn/runtime/hook_snapshot.json
+.cairn/runtime/*.log
