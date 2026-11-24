@@ -1,9 +1,6 @@
 # Cairn Unified 2.0: інструкція для агента
 
-Цей файл — інтерфейс агента до чинної реалізації. Історичні документи
-(`Cairn_2.0_Technical_Architecture_Specification_UA.md`,
-`Cairn_Unified_Technical_Specification_UA (v3).md`) описують проєктування
-й архівні рішення; вони не є довідкою по командах. Чинна довідка —
+Цей файл — інтерфейс агента до чинної реалізації. Чинна довідка —
 `python -m cairn_unified mcp tools` і [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Після завершених правок, коміту або компактації виконуй
