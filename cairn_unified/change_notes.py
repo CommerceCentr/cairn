@@ -69,7 +69,8 @@ def note(store, repo_path: str | Path, paths: list[str], why: str, intent: str,
         from .adapters import codex
         matching = [event for event in codex.recent_edits(
             repo, snapshots[0]["path"], limit=100)
-            if event["session_id"] == session_id
+            if session_id in {event["session_id"],
+                              event.get("journal_session_id")}
             and event["event_id"] == codex_event_id]
         if len(matching) != 1:
             raise CairnError("codex_event_not_found",

@@ -998,9 +998,13 @@ def answer(store, *, repo_id: str, path: str, line: int | None = None,
             if source_kind != "codex":
                 continue
             for reason in commit_item.get("change_reasons") or []:
+                note_session = str(reason.get("session_id") or "")
+                same_codex_session = (note_session == session_id or
+                                      bool(note_session and session_id.startswith("rollout-")
+                                           and session_id.endswith("-" + note_session)))
                 if (reason.get("mutation_source_kind") == "codex"
                         and reason.get("mutation_event_id") == event.get("event_id")
-                        and reason.get("session_id") == session_id
+                        and same_codex_session
                         and reason.get("basis") == "exact_git_blob_after_edit"):
                     explicit_notes.setdefault(change_key(event), []).append(reason)
     explicit_notes = {key: values for key, values in explicit_notes.items()

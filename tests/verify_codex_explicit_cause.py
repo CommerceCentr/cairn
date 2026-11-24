@@ -23,7 +23,8 @@ ACTOR = {"kind": "agent", "id": "codex-fixture"}
 
 
 def case(base: Path, *, referenced_event: str, note_session: str,
-         witness: bool, expected: int, reject_ref: bool = False) -> None:
+         witness: bool, expected: int, reject_ref: bool = False,
+         journal_name: str = "fixture.jsonl") -> None:
     repo = make_repo(base / "repo",
                      files={PY_FILE: "value = 'original causal context one'\n"},
                      second={PY_FILE: "value = 'original causal context two'\n"})
@@ -52,7 +53,7 @@ def case(base: Path, *, referenced_event: str, note_session: str,
     original = codex._lines
     codex._lines = lambda _path: iter(json.dumps(row) for row in journal)
     try:
-        events = normalize.canonical_events(list(codex.read("fixture.jsonl")))
+        events = normalize.canonical_events(list(codex.read(journal_name)))
     finally:
         codex._lines = original
     edit = next(event for event in events if event["kind"] == "mutation")
@@ -61,7 +62,7 @@ def case(base: Path, *, referenced_event: str, note_session: str,
 
     original_discover = codex.discover
     original_lines = codex._lines
-    codex.discover = lambda: ["fixture.jsonl"]
+    codex.discover = lambda: [journal_name]
     codex._lines = lambda _path: iter(json.dumps(row) for row in journal)
     try:
         try:
@@ -91,7 +92,8 @@ def case(base: Path, *, referenced_event: str, note_session: str,
         store, object_type="session", title="Codex fixture", summary="", actor=ACTOR,
         stable_key="codex-session-object",
         semantic={"kind": "session", "source_kind": "codex",
-                  "session_id": "codex-session", "commit": commit})["object"]["id"]
+                  "session_id": Path(journal_name).stem,
+                  "commit": commit})["object"]["id"]
     semantic.relate(store, from_id=whole, to_id=session, relation="caused_by",
                     actor=ACTOR, condition={"basis": "tool_mutation",
                         "evidence": {"event_id": edit["event_id"],
@@ -102,7 +104,7 @@ def case(base: Path, *, referenced_event: str, note_session: str,
         original_sources = witness_linker._sources
         original_lines = codex._lines
         witness_linker._sources = lambda _repo, _db: [
-            ("codex", Path("fixture.jsonl"), "codex-session")]
+            ("codex", Path(journal_name), None)]
         codex._lines = lambda _path: iter(json.dumps(row) for row in journal)
         try:
             linked = witness_linker.run(store_root, path, [path], True)
@@ -130,15 +132,18 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="codex-explicit-cause-") as temp:
         root = Path(temp)
         case(root / "exact", referenced_event="codex-edit-1",
-             note_session="codex-session", witness=True, expected=1)
+             note_session="fixture", witness=True, expected=1)
+        case(root / "legacy-raw-id", referenced_event="codex-edit-1",
+             note_session="codex-session", witness=True, expected=1,
+             journal_name="rollout-2026-11-24-codex-session.jsonl")
         case(root / "wrong-event", referenced_event="other-edit",
-             note_session="codex-session", witness=True, expected=0,
+             note_session="fixture", witness=True, expected=0,
              reject_ref=True)
         case(root / "wrong-session", referenced_event="codex-edit-1",
              note_session="other-session", witness=True, expected=0,
              reject_ref=True)
         case(root / "no-witness", referenced_event="codex-edit-1",
-             note_session="codex-session", witness=False, expected=0)
+             note_session="fixture", witness=False, expected=0)
     print("PASS: Codex explicit event note, session, and Git witness gates")
     return 0
 

@@ -282,7 +282,13 @@ def recent_edits(repo_path: str | Path, path: str = "", limit: int = 20) -> list
                 if not target.is_relative_to(repo) or (wanted and target != wanted):
                     continue
                 result.append({
-                    "session_id": event["session_id"], "event_id": event["event_id"],
+                    # The current indexer keys Codex sessions by journal.stem
+                    # because normalization drops the raw session id. Expose
+                    # that exact graph identity for new notes, and retain the
+                    # journal id for older claims and provenance.
+                    "session_id": Path(journal).stem,
+                    "journal_session_id": event["session_id"],
+                    "event_id": event["event_id"],
                     "ts": event.get("ts"), "path": target.relative_to(repo).as_posix(),
                     "operation": operation,
                     "patch_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest()

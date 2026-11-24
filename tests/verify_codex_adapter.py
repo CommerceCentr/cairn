@@ -69,7 +69,8 @@ def main() -> int:
         codex.discover = original_discover
         codex._lines = original_lines
     assert len(recent) == 1
-    assert recent[0]["session_id"] == "test-session"
+    assert recent[0]["session_id"] == "rollout-fixture"
+    assert recent[0]["journal_session_id"] == "test-session"
     assert recent[0]["event_id"] == "edit-1"
     assert recent[0]["path"] == "a.py"
     assert normalize.capabilities(normalize.SOURCE_CODEX)["mutation"].startswith(
