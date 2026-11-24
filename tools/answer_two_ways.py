@@ -86,15 +86,24 @@ def native(repo: str, store_root: str) -> dict:
     text, ms = timed(git, repo, "blame", "--", NODE)
     steps.append(("git blame", text, ms))
 
+    # ВИПРАВЛЕНО 2026-11-24: тут був скан `.cairn/events/ledger.jsonl`, і
+    # він давав 90% «нативної» ціни. Це тавтологія: журнал Cairn існує
+    # лише разом із Cairn, тож рахувати його ціною роботи БЕЗ Cairn не
+    # можна. Сирі журнали агента існують незалежно, тому скануємо їх.
     def scan() -> str:
-        path = Path(store_root) / ".cairn" / "events" / "ledger.jsonl"
-        if not path.exists():
-            return ""
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            return "".join(line for line in handle if name in line)
+        from cairn_unified.adapters import claude_code
+
+        hits: list[str] = []
+        for journal in claude_code.discover():
+            try:
+                with open(journal, encoding="utf-8", errors="replace") as handle:
+                    hits.extend(line for line in handle if name in line)
+            except OSError:
+                continue
+        return "".join(hits)
 
     text, ms = timed(scan)
-    steps.append((f"лінійний скан журналу ~ {name}", text, ms))
+    steps.append((f"скан сирих журналів агента ~ {name}", text, ms))
 
     total, total_ms, rows, blob = dict(ZERO), 0.0, [], []
     for label, body, ms in steps:

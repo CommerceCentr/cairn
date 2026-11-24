@@ -7,10 +7,19 @@
     python tests/baseline_native.py tests/run_all.py --commit 942cb526 \
         --repo <REPO> --root <STORE_ROOT>
 
+ВИПРАВЛЕНО 2026-11-24. Раніше сюди входив лінійний скан
+`.cairn/events/ledger.jsonl`, і він давав 90% усієї «нативної» ціни
+(204 070 токенів із 224 529 на одному вузлі). Це була тавтологія: журнал
+Cairn існує ЛИШЕ тоді, коли Cairn уже є, тож його не можна рахувати
+ціною роботи БЕЗ Cairn. Тепер нативний шлях — файл, історія git і blame.
+
+Сирий журнал САМОГО АГЕНТА (`~/.claude/projects/*.jsonl`) існує без Cairn,
+тому його скан — законний нативний крок. Він рахується окремим рядком і
+вмикається прапорцем `--journal`, бо це інша стратегія з іншою ціною.
+
 МЕЖА: це ціна СИРОВИНИ, не ціна рівносильної відповіді. Нативний шлях тут
 не намагається відтворити причину — він лише дає матеріал, з якого людина
-чи агент її відтворювали б. Порівнювати з Cairn-шляхом можна лише назвавши
-цю межу (див. `tests/compare_why.py`).
+чи агент її відтворювали б.
 """
 
 from __future__ import annotations
@@ -37,30 +46,35 @@ def git(repo: str, *args: str) -> str:
     return proc.stdout
 
 
-def ledger_scan(store_root: str, needle: str) -> str:
-    """Те, що робить агент без Cairn: лінійний скан журналу за підрядком.
+def journal_scan(needle: str) -> str:
+    """Скан СИРОГО журналу агента — єдиний скан, законний без Cairn.
 
-    Підрядок не розрізняє код від коментаря і не має напрямку ребра — саме
-    тому це сировина. Якщо журналу немає, повертає порожньо, і вимір це
-    покаже як 0 байт, а не як успіх.
+    Журнали Claude Code лежать у `~/.claude/projects/` незалежно від того,
+    чи встановлений Cairn, тому шукати в них — чесна нативна стратегія.
+    Скан `.cairn/events/ledger.jsonl` чесною НЕ є: цей файл створює Cairn.
     """
-    path = Path(store_root) / ".cairn" / "events" / "ledger.jsonl"
-    if not path.exists():
+    try:
+        from cairn_unified.adapters import claude_code
+    except ImportError:
         return ""
-    hits = []
-    with path.open(encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            if needle in line:
-                hits.append(line)
+    hits: list[str] = []
+    for path in claude_code.discover():
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                hits.extend(line for line in handle if needle in line)
+        except OSError:
+            continue
     return "".join(hits)
 
 
-def collect(*, repo: str, store_root: str, path: str, commit: str) -> dict:
+def collect(*, repo: str, store_root: str, path: str, commit: str,
+            with_journal: bool = False) -> dict:
     needle = Path(path).name
     steps: list[tuple[str, str, float]] = []
 
-    text, ms = timed(ledger_scan, store_root, needle)
-    steps.append((f"ledger scan .cairn ~ {needle}", text, ms))
+    text, ms = timed(lambda: (Path(repo) / path).read_text(encoding="utf-8", errors="replace")
+                     if (Path(repo) / path).is_file() else "")
+    steps.append((f"читання файла {path}", text, ms))
     text, ms = timed(git, repo, "log", "-1", commit)
     steps.append((f"git log -1 {commit[:7]}", text, ms))
     text, ms = timed(git, repo, "show", "--name-status", "--format=%H%n%cI%n%s%n%b", commit)
@@ -69,6 +83,9 @@ def collect(*, repo: str, store_root: str, path: str, commit: str) -> dict:
     steps.append((f"git log -p -12 -- {path}", text, ms))
     text, ms = timed(git, repo, "blame", "--", path)
     steps.append((f"git blame -- {path}", text, ms))
+    if with_journal:
+        text, ms = timed(journal_scan, needle)
+        steps.append((f"скан сирих журналів агента ~ {needle}", text, ms))
 
     total = dict(ZERO)
     total_ms = 0.0
@@ -83,7 +100,7 @@ def collect(*, repo: str, store_root: str, path: str, commit: str) -> dict:
         "question": f"коли і чому редагувався {path}, з комітом {commit[:7]}",
         "steps": rows,
         "total": {**total, "ms": round(total_ms, 1)},
-        "boundary": "ціна сировини, не ціна рівносильної відповіді",
+        "boundary": "ціна сировини, не ціна рівносильної відповіді; скан журналу Cairn сюди НЕ входить — він існує лише разом із Cairn",
     }
 
 
@@ -93,10 +110,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--repo", default=str(ROOT))
     parser.add_argument("--root", default=str(ROOT), help="корінь проєкту зі сховищем .cairn")
+    parser.add_argument("--journal", action="store_true",
+                        help="додати скан сирих журналів агента (інша стратегія)")
     parser.add_argument("--out", default=None)
     args = parser.parse_args(argv)
 
-    report = collect(repo=args.repo, store_root=args.root, path=args.path, commit=args.commit)
+    report = collect(repo=args.repo, store_root=args.root, path=args.path,
+                     commit=args.commit, with_journal=args.journal)
     text = json.dumps(report, ensure_ascii=False, indent=1)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)

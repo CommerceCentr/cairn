@@ -61,9 +61,29 @@ CAPABILITIES: dict[str, dict[str, str]] = {
 }
 
 
+#: Одне джерело — одна канонічна назва. Довгі написання лишились від
+#: ранішого інструмента й трапляються у вже записаних сховищах, тому їх
+#: приймаємо, але не породжуємо.
+SOURCE_ALIASES: dict[str, str] = {
+    "claude_code": SOURCE_CLAUDE_CODE,
+    "claude_code_jsonl": SOURCE_CLAUDE_CODE,
+    "codex": SOURCE_CODEX,
+    "codex_rollout": SOURCE_CODEX,
+    "opencode": "opencode",
+    "opencode_db": "opencode",
+}
+
+
+def canonical_source(source_kind: str | None) -> str:
+    """Канонічна назва джерела. Невідоме повертається як є, не вгадується."""
+    if not source_kind:
+        return ""
+    return SOURCE_ALIASES.get(str(source_kind), str(source_kind))
+
+
 def capabilities(source_kind: str) -> dict[str, str]:
     """Матриця можливостей джерела. Невідоме джерело — `unknown`, не `supported`."""
-    return CAPABILITIES.get(source_kind) or {
+    return CAPABILITIES.get(canonical_source(source_kind)) or {
         "user_intent": "unknown", "compaction": "unknown",
         "reasoning": "unknown", "mutation": "unknown",
     }

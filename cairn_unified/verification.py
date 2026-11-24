@@ -90,7 +90,9 @@ def _source_failure(source: str, exc: BaseException, what: str) -> str:
 
 def _source_gives_mutations(sem: dict) -> bool:
     """Чи може джерело цього обʼєкта давати мутації взагалі."""
-    kind = str(sem.get("source_kind") or "opencode")
+    from .adapters import normalize as _norm
+
+    kind = _norm.canonical_source(sem.get("source_kind")) or "opencode"
     if kind == "opencode":
         return True
     try:
@@ -112,9 +114,16 @@ def _journal_path(source_kind: str, source_ref: str) -> str:
     if not source_ref:
         return ""
     try:
-        if source_kind == "claude_code_jsonl":
+        from .adapters import normalize
+
+        # Дві назви одного джерела: індексатор пише `claude_code`,
+        # ранішій інструмент писав `claude_code_jsonl`. Перевірено на
+        # справжньому сховищі: без зведення журнал не знаходився ДЛЯ
+        # ЖОДНОЇ сесії, і автоперевірка була мертвою.
+        kind = normalize.canonical_source(source_kind)
+        if kind == normalize.SOURCE_CLAUDE_CODE:
             from .adapters import claude_code as reader
-        elif source_kind == "codex_rollout":
+        elif kind == normalize.SOURCE_CODEX:
             from .adapters import codex as reader
         else:
             return ""
@@ -133,7 +142,9 @@ def _source_events(sem: dict, *, opencode_db: str | None = None) -> tuple[list, 
     а не тихе читання opencode.db замість нього: підміна джерела зробила б
     перевірку безсенсовною.
     """
-    kind = str(sem.get("source_kind") or "opencode")
+    from .adapters import normalize as _norm
+
+    kind = _norm.canonical_source(sem.get("source_kind")) or "opencode"
     if kind == "opencode":
         path = _db_path(sem, opencode_db)
         if not path:
@@ -160,7 +171,7 @@ def _source_events(sem: dict, *, opencode_db: str | None = None) -> tuple[list, 
     try:
         from .adapters import normalize
 
-        if kind == "claude_code_jsonl":
+        if kind == _norm.SOURCE_CLAUDE_CODE:
             from .adapters import claude_code as reader
         else:
             from .adapters import codex as reader
@@ -239,8 +250,15 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
     # мусить бути. Виміряно: work_item ескалював із `commit_absent`
     # і `node_not_indexed` при повній справності.
     NOT_CODE_BOUND = {"work_item", "note"}
+    # Сесія, записана масовим індексатором, коміта НЕ має й мати не
+    # повинна: допустимий звʼязок із комітом — це окреме ребро
+    # `mutation_in_commit`. Вимога коміта тут давала `commit_absent` для
+    # всіх шести сесій справжнього сховища при повній справності.
+    session_without_commit = (sem.get("kind") == "session"
+                              and not sem.get("commit"))
     skip_commit = (sem.get("kind") == "merge_context"
-                   or sem.get("kind") in NOT_CODE_BOUND)
+                   or sem.get("kind") in NOT_CODE_BOUND
+                   or session_without_commit)
     base_revision_only = not sem.get("commit") and bool(
         sem.get("kind") == "user_requested_change" and sem.get("base_revision"))
     commit = str(sem.get("base_revision") if base_revision_only
@@ -294,6 +312,13 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
         else:
             reasons.append("unresolved:pack_missing")
 
+    if session_without_commit:
+        admissible = store.read_one(
+            "SELECT count(*) AS n FROM relations WHERE from_id = ? "
+            "AND relation_type = 'mutation_in_commit'", (str(body.get("id") or ""),))
+        checks.append({"check": "session_commit_links",
+                       "value": str((admissible or {}).get("n", 0))})
+
     if sem.get("kind") == "session":
         # Тотожність сесії — реальний рядок компактації в opencode.db, а не
         # SHA коміту й не власний текст агента. Джерело читається з БД
@@ -313,6 +338,39 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                 except Exception as exc:          # noqa: BLE001 — класифікуємо нижче
                     source = None
                     source_failure = _source_failure(db_path, exc, "session")
+            if source is None and not source_failure:
+                # Джерело прочиталось, а компактації в ньому немає. Це НЕ
+                # недоступність джерела: виміряно сесію, де БД віддала 1227
+                # подій і `fail=''`, а причина називалась
+                # `session_source_unavailable` — неправда про власний стан.
+                # Доводимо з ДЖЕРЕЛА, не з payload: якщо після останньої
+                # мутації компактації справді немає, описова сесія законна.
+                events, path, fail = _source_events(sem, opencode_db=opencode_db)
+                if fail:
+                    source_failure = fail
+                elif events:
+                    last_mut = max((event.get("seq") or 0) for event in events
+                                   if event.get("kind") == "mutation")                         if any(e.get("kind") == "mutation" for e in events) else 0
+                    after = [event for event in events
+                             if event.get("kind") == "compaction"
+                             and (event.get("seq") or 0) > last_mut]
+                    if after:
+                        reasons.append("unresolved:compaction_present_but_unlinked")
+                    else:
+                        checks.append({"check": "source_readable",
+                                       "value": Path(path).name[:24]})
+                        checks.append({"check": "no_compaction_after_last_mutation",
+                                       "value": f"mut={last_mut}"})
+                        sids = {str(event.get("session_id") or "")
+                                for event in events if event.get("session_id")}
+                        if not sids or str(sem.get("session_id")) in sids:
+                            checks.append({"check": "session_id_in_source",
+                                           "value": str(sem.get("session_id"))[:18]})
+                        else:
+                            reasons.append("unresolved:session_id_not_in_source")
+                        source = {"summary": "",
+                                  "keep_id": str(sem.get("keep_id") or ""),
+                                  "_descriptive": True}
         else:
             # Журнал Claude Code / Codex: компактацію шукаємо за тим самим
             # `message_id`, що записав збирач. Якщо агент компактації не
@@ -325,7 +383,8 @@ def check_object(store, body: dict, *, repo_path: str | Path | None = None,
                 if found:
                     source = {"summary": found[-1].get("summary"),
                               "keep_id": found[-1].get("keep_id") or ""}
-                elif not msg_id.endswith(":tail"):
+                elif not (msg_id.endswith(":tail")
+                          or str(sem.get("reason") or "").startswith("no_")):
                     source_failure = "unresolved:compaction_absent_in_journal"
                 else:
                     # Описова сесія без компактації агента: доводимо те, що

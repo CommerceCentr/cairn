@@ -47,7 +47,7 @@ def main() -> int:
         "deleted_lines_stored": baseline["deleted_lines_stored"],
         "session_objects": baseline["session_objects"],
         "session_sources": baseline["session_sources"],
-        "session_surveys": [{"repo": str(p), **s}
+        "session_surveys": [{"repo": Path(p).name, **s}
                             for p, s in zip(source_repos, surveys)],
         "zone_context": node["zone_context"],
         "path_probe": baseline["path_probe"],

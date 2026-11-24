@@ -1,0 +1,1008 @@
+{
+ "summary": {
+  "store": "cairn",
+  "level": "caused_by",
+  "nodes_with_history": 114,
+  "sampled": 25,
+  "failed": 0,
+  "failure_reasons": [],
+  "budget_chars": 8000,
+  "native_tokens": {
+   "median": 9564,
+   "min": 1772,
+   "max": 54590
+  },
+  "cairn_tokens": {
+   "median": 1755,
+   "min": 1058,
+   "max": 9262
+  },
+  "native_ms": {
+   "median": 64,
+   "min": 56.0,
+   "max": 97.3
+  },
+  "cairn_ms": {
+   "median": 559,
+   "min": 365.5,
+   "max": 962.4
+  },
+  "ratio_tokens": {
+   "median": 3.1,
+   "min": 0.9,
+   "max": 32.9
+  },
+  "boundary": "нативна колонка — ціна сировини, не ціна рівносильної відповіді; токени — chars/4"
+ },
+ "rows": [
+  {
+   "repo": "cairn",
+   "path": "tools/record_vec_checkpoint.py",
+   "native": {
+    "bytes": 16494,
+    "chars": 16308,
+    "tokens_est": 4078,
+    "ms": 68.7
+   },
+   "cairn": {
+    "bytes": 7629,
+    "chars": 6710,
+    "tokens_est": 1678,
+    "ms": 521.6
+   },
+   "coverage": {
+    "node_changes": 3,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 2,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/measurements/after-942cb526-budget2000.json",
+   "native": {
+    "bytes": 15887,
+    "chars": 15479,
+    "tokens_est": 3871,
+    "ms": 97.3
+   },
+   "cairn": {
+    "bytes": 7608,
+    "chars": 6811,
+    "tokens_est": 1703,
+    "ms": 604.3
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tools/retract_git_commit.py",
+   "native": {
+    "bytes": 7085,
+    "chars": 7085,
+    "tokens_est": 1772,
+    "ms": 56.8
+   },
+   "cairn": {
+    "bytes": 8171,
+    "chars": 7649,
+    "tokens_est": 1913,
+    "ms": 431.0
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 1,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 3,
+    "typed_edges": 3,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "cairn_unified/change_notes.py",
+   "native": {
+    "bytes": 54220,
+    "chars": 53599,
+    "tokens_est": 13401,
+    "ms": 64.6
+   },
+   "cairn": {
+    "bytes": 25157,
+    "chars": 18985,
+    "tokens_est": 4747,
+    "ms": 599.7
+   },
+   "coverage": {
+    "node_changes": 9,
+    "committed_node_changes": 3,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 3,
+    "unlinked_node_changes": 6,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 5,
+    "typed_edges": 5,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/CAIRN_RELEASE_EVIDENCE.md",
+   "native": {
+    "bytes": 31536,
+    "chars": 21816,
+    "tokens_est": 5455,
+    "ms": 65.5
+   },
+   "cairn": {
+    "bytes": 4954,
+    "chars": 4232,
+    "tokens_est": 1058,
+    "ms": 499.9
+   },
+   "coverage": {
+    "node_changes": 6,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 6,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 3,
+    "typed_edges": 3,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/causal-development-cycle.uk.md",
+   "native": {
+    "bytes": 17061,
+    "chars": 10977,
+    "tokens_est": 2745,
+    "ms": 62.6
+   },
+   "cairn": {
+    "bytes": 9602,
+    "chars": 7004,
+    "tokens_est": 1751,
+    "ms": 530.4
+   },
+   "coverage": {
+    "node_changes": 2,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 2,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 3,
+    "typed_edges": 3,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tests/verify_adapter_crud.py",
+   "native": {
+    "bytes": 47306,
+    "chars": 43909,
+    "tokens_est": 10978,
+    "ms": 63.4
+   },
+   "cairn": {
+    "bytes": 9154,
+    "chars": 8042,
+    "tokens_est": 2011,
+    "ms": 579.0
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "cairn_unified/verification.py",
+   "native": {
+    "bytes": 205085,
+    "chars": 190287,
+    "tokens_est": 47572,
+    "ms": 83.9
+   },
+   "cairn": {
+    "bytes": 12714,
+    "chars": 11306,
+    "tokens_est": 2827,
+    "ms": 798.3
+   },
+   "coverage": {
+    "node_changes": 27,
+    "committed_node_changes": 2,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 25,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 6,
+    "typed_edges": 6,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tools/sync_project_causality.py",
+   "native": {
+    "bytes": 16252,
+    "chars": 16252,
+    "tokens_est": 4064,
+    "ms": 58.3
+   },
+   "cairn": {
+    "bytes": 11007,
+    "chars": 9393,
+    "tokens_est": 2349,
+    "ms": 517.0
+   },
+   "coverage": {
+    "node_changes": 4,
+    "committed_node_changes": 3,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 1,
+    "unlinked_node_changes": 1,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 5,
+    "typed_edges": 5,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "Cairn_2.0_Technical_Architecture_Specification_UA.md",
+   "native": {
+    "bytes": 259361,
+    "chars": 218351,
+    "tokens_est": 54590,
+    "ms": 65.2
+   },
+   "cairn": {
+    "bytes": 7759,
+    "chars": 6637,
+    "tokens_est": 1660,
+    "ms": 962.4
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 0,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 1,
+    "objects_linked": 1,
+    "typed_edges": 1,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tools/link_agent_session.py",
+   "native": {
+    "bytes": 87170,
+    "chars": 80956,
+    "tokens_est": 20240,
+    "ms": 71.0
+   },
+   "cairn": {
+    "bytes": 7732,
+    "chars": 6590,
+    "tokens_est": 1648,
+    "ms": 497.2
+   },
+   "coverage": {
+    "node_changes": 13,
+    "committed_node_changes": 2,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 11,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tools/causal_scope.py",
+   "native": {
+    "bytes": 10391,
+    "chars": 10175,
+    "tokens_est": 2545,
+    "ms": 56.0
+   },
+   "cairn": {
+    "bytes": 5846,
+    "chars": 5299,
+    "tokens_est": 1325,
+    "ms": 465.6
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 1,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 3,
+    "typed_edges": 3,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "README.uk.md",
+   "native": {
+    "bytes": 216757,
+    "chars": 148177,
+    "tokens_est": 37046,
+    "ms": 67.5
+   },
+   "cairn": {
+    "bytes": 38690,
+    "chars": 31654,
+    "tokens_est": 7914,
+    "ms": 819.9
+   },
+   "coverage": {
+    "node_changes": 35,
+    "committed_node_changes": 6,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 1,
+    "unlinked_node_changes": 29,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 4,
+    "objects_linked": 8,
+    "typed_edges": 8,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tests/test_unified_session_context.py",
+   "native": {
+    "bytes": 59324,
+    "chars": 55732,
+    "tokens_est": 13934,
+    "ms": 73.3
+   },
+   "cairn": {
+    "bytes": 7837,
+    "chars": 7013,
+    "tokens_est": 1754,
+    "ms": 524.4
+   },
+   "coverage": {
+    "node_changes": 6,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 5,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 3,
+    "typed_edges": 3,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tests/verify_change_notes.py",
+   "native": {
+    "bytes": 36654,
+    "chars": 36654,
+    "tokens_est": 9165,
+    "ms": 61.4
+   },
+   "cairn": {
+    "bytes": 24172,
+    "chars": 18194,
+    "tokens_est": 4549,
+    "ms": 480.9
+   },
+   "coverage": {
+    "node_changes": 13,
+    "committed_node_changes": 3,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 2,
+    "unlinked_node_changes": 10,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 5,
+    "typed_edges": 5,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/INTEGRATION.md",
+   "native": {
+    "bytes": 38337,
+    "chars": 38250,
+    "tokens_est": 9564,
+    "ms": 59.5
+   },
+   "cairn": {
+    "bytes": 8527,
+    "chars": 7381,
+    "tokens_est": 1846,
+    "ms": 559.5
+   },
+   "coverage": {
+    "node_changes": 5,
+    "committed_node_changes": 5,
+    "node_attested_causes": 1,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 0,
+    "motives_same_event": 1,
+    "motives_prior_by_seq": 4,
+    "objects_linked": 1,
+    "typed_edges": 1,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "cairn_unified/semantic.py",
+   "native": {
+    "bytes": 140822,
+    "chars": 133112,
+    "tokens_est": 33280,
+    "ms": 70.0
+   },
+   "cairn": {
+    "bytes": 10834,
+    "chars": 9381,
+    "tokens_est": 2346,
+    "ms": 777.5
+   },
+   "coverage": {
+    "node_changes": 3,
+    "committed_node_changes": 2,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 1,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 5,
+    "typed_edges": 5,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "Cairn_Unified_Implementation_Backlog_UA.md",
+   "native": {
+    "bytes": 239545,
+    "chars": 201345,
+    "tokens_est": 50338,
+    "ms": 64.8
+   },
+   "cairn": {
+    "bytes": 7820,
+    "chars": 6679,
+    "tokens_est": 1670,
+    "ms": 794.5
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 0,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 1,
+    "objects_linked": 1,
+    "typed_edges": 1,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "adapters/claude_code.py",
+   "native": {
+    "bytes": 24830,
+    "chars": 20738,
+    "tokens_est": 5185,
+    "ms": 56.6
+   },
+   "cairn": {
+    "bytes": 7829,
+    "chars": 7017,
+    "tokens_est": 1755,
+    "ms": 365.5
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 1,
+    "user_intents": 0,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 0,
+    "typed_edges": 0,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "unresolved"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tests/verify_was_rationale.py",
+   "native": {
+    "bytes": 45615,
+    "chars": 41842,
+    "tokens_est": 10462,
+    "ms": 64.0
+   },
+   "cairn": {
+    "bytes": 11458,
+    "chars": 10045,
+    "tokens_est": 2512,
+    "ms": 610.9
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 5,
+    "typed_edges": 5,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/WHY-CAIRN.md",
+   "native": {
+    "bytes": 83581,
+    "chars": 60232,
+    "tokens_est": 15059,
+    "ms": 63.9
+   },
+   "cairn": {
+    "bytes": 37953,
+    "chars": 37046,
+    "tokens_est": 9262,
+    "ms": 577.4
+   },
+   "coverage": {
+    "node_changes": 2,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 1,
+    "user_intents": 0,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 1,
+    "objects_linked": 1,
+    "typed_edges": 1,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "budget",
+    "budget",
+    "budget",
+    "budget",
+    "budget_exceeded"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "CHANGELOG.md",
+   "native": {
+    "bytes": 30428,
+    "chars": 22152,
+    "tokens_est": 5539,
+    "ms": 57.5
+   },
+   "cairn": {
+    "bytes": 8218,
+    "chars": 7090,
+    "tokens_est": 1773,
+    "ms": 570.5
+   },
+   "coverage": {
+    "node_changes": 2,
+    "committed_node_changes": 2,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 1,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "docs/measurements/9feecdf-cairn_unified-why.py.json",
+   "native": {
+    "bytes": 16157,
+    "chars": 15749,
+    "tokens_est": 3939,
+    "ms": 62.2
+   },
+   "cairn": {
+    "bytes": 7511,
+    "chars": 6731,
+    "tokens_est": 1683,
+    "ms": 611.2
+   },
+   "coverage": {
+    "node_changes": 1,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 0,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "tools/reindex_zone_history.py",
+   "native": {
+    "bytes": 21195,
+    "chars": 21195,
+    "tokens_est": 5301,
+    "ms": 71.1
+   },
+   "cairn": {
+    "bytes": 7985,
+    "chars": 6981,
+    "tokens_est": 1746,
+    "ms": 526.8
+   },
+   "coverage": {
+    "node_changes": 7,
+    "committed_node_changes": 1,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 6,
+    "user_intents": 30,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 4,
+    "typed_edges": 4,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": [
+    "bounded_chain",
+    "budget",
+    "budget",
+    "budget",
+    "budget"
+   ]
+  },
+  {
+   "repo": "cairn",
+   "path": "cairn_unified/context.py",
+   "native": {
+    "bytes": 113258,
+    "chars": 106406,
+    "tokens_est": 26602,
+    "ms": 78.0
+   },
+   "cairn": {
+    "bytes": 5401,
+    "chars": 4833,
+    "tokens_est": 1209,
+    "ms": 555.2
+   },
+   "coverage": {
+    "node_changes": 4,
+    "committed_node_changes": 0,
+    "node_attested_causes": 0,
+    "file_state_attested_reasons": 0,
+    "unlinked_node_changes": 4,
+    "user_intents": 0,
+    "motives_same_event": 0,
+    "motives_prior_by_seq": 0,
+    "objects_linked": 1,
+    "typed_edges": 1,
+    "excluded_by_design": [
+     "source_code"
+    ],
+    "note": "вихідний код не входить у відповідь: читати файл напряму"
+   },
+   "omissions": []
+  }
+ ],
+ "failures": []
+}
